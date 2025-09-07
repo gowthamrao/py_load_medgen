@@ -23,6 +23,9 @@ from py_load_medgen.sql.ddl import (
     PRODUCTION_NAMES_INDEXES_DDL,
     PRODUCTION_SEMANTIC_TYPES_INDEXES_DDL,
     PRODUCTION_MEDGEN_HPO_MAPPING_INDEXES_DDL,
+    STAGING_MEDGEN_RELATIONSHIPS_DDL,
+    PRODUCTION_MEDGEN_RELATIONSHIPS_DDL,
+    PRODUCTION_MEDGEN_RELATIONSHIPS_INDEXES_DDL,
 )
 from py_load_medgen.parser import (
     parse_mrconso,
@@ -33,6 +36,8 @@ from py_load_medgen.parser import (
     stream_mrsty_tsv,
     parse_hpo_mapping,
     stream_hpo_mapping_tsv,
+    parse_mrrel,
+    stream_mrrel_tsv,
 )
 
 # Configure logging
@@ -69,6 +74,18 @@ ETL_CONFIG = [
         "prod_pk": "semantic_type_id",
         "business_key": "atui",
         "index_ddls": PRODUCTION_SEMANTIC_TYPES_INDEXES_DDL,
+    },
+    {
+        "file": "MRREL.RRF",
+        "parser": parse_mrrel,
+        "transformer": stream_mrrel_tsv,
+        "staging_table": "staging_medgen_relationships",
+        "staging_ddl": STAGING_MEDGEN_RELATIONSHIPS_DDL,
+        "prod_table": "medgen_relationships",
+        "prod_ddl": PRODUCTION_MEDGEN_RELATIONSHIPS_DDL,
+        "prod_pk": "relationship_id",
+        "business_key": "rui",
+        "index_ddls": PRODUCTION_MEDGEN_RELATIONSHIPS_INDEXES_DDL,
     },
     {
         "file": "NAMES.RRF.gz",

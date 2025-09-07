@@ -236,6 +236,90 @@ def parse_hpo_mapping(file_path: Path) -> Iterator[MedgenHpoMapping]:
 
 
 @dataclass(frozen=True)
+class MrrelRecord:
+    """
+    Represents a single record from the MRREL.RRF file.
+    Field names correspond to the columns defined in the UMLS Reference Manual.
+    See: https://www.ncbi.nlm.nih.gov/books/NBK9685/table/ch03.T.related_concepts_file_mrrel_rrf/
+    """
+
+    cui1: str
+    aui1: Optional[str]
+    stype1: str
+    rel: str
+    cui2: str
+    aui2: Optional[str]
+    stype2: str
+    rela: Optional[str]
+    rui: Optional[str]
+    srui: Optional[str]
+    sab: str
+    sl: Optional[str]
+    rg: Optional[str]
+    dir: Optional[str]
+    suppress: str
+    cvf: Optional[str]
+    raw_record: str
+
+
+def stream_mrrel_tsv(records: Iterator[MrrelRecord]) -> Iterator[bytes]:
+    """
+    Transforms an iterator of MrrelRecord objects into a streaming iterator
+    of UTF-8 encoded TSV lines.
+    """
+    for record in records:
+        line = "\t".join(
+            str(getattr(record, field.name) or r"\N") for field in fields(record)
+        )
+        yield (line + "\n").encode("utf-8")
+
+
+def parse_mrrel(file_stream: IO[str]) -> Iterator[MrrelRecord]:
+    """
+    Parses a pipe-delimited MRREL.RRF file stream.
+    Args:
+        file_stream: A text file-like object containing MRREL.RRF data.
+    Yields:
+        MrrelRecord instances for each valid row in the file.
+    """
+    for i, line in enumerate(file_stream):
+        raw_line = line.strip()
+        if not raw_line:
+            continue
+
+        row = raw_line.split("|")
+        # After splitting, a valid row will have 17 elements, with the last one being empty.
+        if len(row) < 16:
+            logging.warning(
+                f"Skipping malformed row {i+1} in MRREL.RRF: expected 16 columns, found {len(row) - 1}"
+            )
+            continue
+
+        try:
+            yield MrrelRecord(
+                cui1=row[0],
+                aui1=row[1] if row[1] else None,
+                stype1=row[2],
+                rel=row[3],
+                cui2=row[4],
+                aui2=row[5] if row[5] else None,
+                stype2=row[6],
+                rela=row[7] if row[7] else None,
+                rui=row[8] if row[8] else None,
+                srui=row[9] if row[9] else None,
+                sab=row[10],
+                sl=row[11] if row[11] else None,
+                rg=row[12] if row[12] else None,
+                dir=row[13] if row[13] else None,
+                suppress=row[14],
+                cvf=row[15] if row[15] else None,
+                raw_record=raw_line,
+            )
+        except IndexError:
+            logging.warning(f"Skipping malformed row {i+1} in MRREL.RRF: not enough columns.")
+
+
+@dataclass(frozen=True)
 class MrstyRecord:
     """
     Represents a single record from the MRSTY.RRF file.
