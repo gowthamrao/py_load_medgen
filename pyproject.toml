@@ -20,7 +20,7 @@ dependencies = ["tenacity"]
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]"]
-test = ["pytest", "pytest-mock", "pytest-postgresql", "psycopg[binary]"]
+test = ["pytest", "pytest-mock", "psycopg[binary]", "testcontainers[postgres]"]
 
 [project.scripts]
 py-load-medgen = "py_load_medgen.cli:main"

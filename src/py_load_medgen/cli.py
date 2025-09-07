@@ -10,7 +10,14 @@ from typing import Iterator, TypeVar
 
 from py_load_medgen.downloader import Downloader
 from py_load_medgen.loader.factory import LoaderFactory
-from py_load_medgen.sql.ddl import STAGING_CONCEPTS_DDL, STAGING_NAMES_DDL
+from py_load_medgen.sql.ddl import (
+    STAGING_CONCEPTS_DDL,
+    STAGING_NAMES_DDL,
+    PRODUCTION_CONCEPTS_DDL,
+    PRODUCTION_NAMES_DDL,
+    PRODUCTION_CONCEPTS_INDEXES_DDL,
+    PRODUCTION_NAMES_INDEXES_DDL,
+)
 from py_load_medgen.parser import (
     parse_mrconso,
     stream_mrconso_tsv,
@@ -29,33 +36,30 @@ NCBI_FTP_PATH = "/pub/medgen/"
 
 # File and Table Mappings
 ETL_CONFIG = [
-    (
-        "MRCONSO.RRF",
-        parse_mrconso,
-        stream_mrconso_tsv,
-        "staging_medgen_concepts",
-        STAGING_CONCEPTS_DDL,
-        "medgen_concepts",
-        [
-            "ALTER TABLE {table_name} ADD CONSTRAINT pk_{table_name} PRIMARY KEY (aui);",
-            "CREATE INDEX idx_{table_name}_cui ON {table_name} (cui);",
-            "CREATE INDEX idx_{table_name}_sab ON {table_name} (sab);",
-            "CREATE INDEX idx_{table_name}_code ON {table_name} (code);",
-        ],
-    ),
-    (
-        "NAMES.RRF.gz",
-        parse_names,
-        stream_names_tsv,
-        "staging_medgen_names",
-        STAGING_NAMES_DDL,
-        "medgen_names",
-        [
-            "ALTER TABLE {table_name} ADD CONSTRAINT pk_{table_name} PRIMARY KEY (cui, name);",
-            "CREATE INDEX idx_{table_name}_cui ON {table_name} (cui);",
-        ],
-    ),
+    {
+        "file": "MRCONSO.RRF",
+        "parser": parse_mrconso,
+        "transformer": stream_mrconso_tsv,
+        "staging_table": "staging_medgen_concepts",
+        "staging_ddl": STAGING_CONCEPTS_DDL,
+        "prod_table": "medgen_concepts",
+        "prod_ddl": PRODUCTION_CONCEPTS_DDL,
+        "prod_pk": "concept_id",
+        "index_ddls": PRODUCTION_CONCEPTS_INDEXES_DDL,
+    },
+    {
+        "file": "NAMES.RRF.gz",
+        "parser": parse_names,
+        "transformer": stream_names_tsv,
+        "staging_table": "staging_medgen_names",
+        "staging_ddl": STAGING_NAMES_DDL,
+        "prod_table": "medgen_names",
+        "prod_ddl": PRODUCTION_NAMES_DDL,
+        "prod_pk": "name_id",
+        "index_ddls": PRODUCTION_NAMES_INDEXES_DDL,
+    },
 ]
+
 
 # --- Helper for counting records in a stream ---
 T = TypeVar("T")
@@ -92,9 +96,9 @@ def main():
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["full"],
+        choices=["full", "delta"],
         default="full",
-        help="The ETL load strategy to perform.",
+        help="The ETL load strategy to perform. 'full' performs a complete refresh. 'delta' applies changes since the last load.",
     )
 
     args = parser.parse_args()
@@ -163,39 +167,29 @@ def main():
             )
 
             for config in ETL_CONFIG:
-                (
-                    remote_file,
-                    parser_func,
-                    transformer_func,
-                    staging_table,
-                    staging_ddl,
-                    prod_table,
-                    index_ddls,
-                ) = config
+                local_path = local_file_paths[config["file"]]
 
-                local_path = local_file_paths[remote_file]
-
-                logging.info(f"--- Starting ETL for {remote_file} -> {prod_table} ---")
+                logging.info(f"--- Starting ETL for {config['file']} -> {config['prod_table']} ---")
 
                 # A. Initialize Staging
-                loader.initialize_staging(staging_table, staging_ddl)
+                loader.initialize_staging(config["staging_table"], config["staging_ddl"])
 
                 # B. Parse, Transform, and Load
                 logging.info(f"Opening and parsing {local_path}...")
                 record_counter = Counter()
                 f = None
                 try:
-                    if remote_file.endswith(".gz"):
-                        records_iterator = parser_func(local_path)
+                    if config["file"].endswith(".gz"):
+                        records_iterator = config["parser"](local_path)
                     else:
                         f = open(local_path, "r", encoding="utf-8")
-                        records_iterator = parser_func(f)
+                        records_iterator = config["parser"](f)
 
                     counted_records = count_iterator(records_iterator, record_counter)
-                    byte_iterator = transformer_func(counted_records)
-                    loader.bulk_load(staging_table, byte_iterator)
+                    byte_iterator = config["transformer"](counted_records)
+                    loader.bulk_load(config["staging_table"], byte_iterator)
 
-                    logging.info(f"Finished loading data into {staging_table}.")
+                    logging.info(f"Finished loading data into {config['staging_table']}.")
                     logging.info(f"Extracted and loaded {record_counter.value} records.")
                     total_records_extracted += record_counter.value
                     total_records_loaded += record_counter.value
@@ -204,10 +198,32 @@ def main():
                     if f:
                         f.close()
 
-                # C. Apply Changes (Full Load)
+                # C. Apply Changes based on mode
                 if args.mode == "full":
-                    loader.apply_changes(staging_table, prod_table, index_ddls)
-                    loader.cleanup(staging_table, prod_table)
+                    loader.apply_changes(
+                        mode="full",
+                        staging_table=config["staging_table"],
+                        production_table=config["prod_table"],
+                        production_ddl=config["prod_ddl"],
+                        index_ddls=config["index_ddls"],
+                        pk_name=config["prod_pk"],
+                    )
+                elif args.mode == "delta":
+                    loader.execute_cdc(
+                        staging_table=config["staging_table"],
+                        production_table=config["prod_table"],
+                        pk_name=config["prod_pk"],
+                    )
+                    loader.apply_changes(
+                        mode="delta",
+                        staging_table=config["staging_table"],
+                        production_table=config["prod_table"],
+                        production_ddl=config["prod_ddl"],  # Not used in delta, but required by signature
+                        index_ddls=config["index_ddls"],    # Not used in delta
+                        pk_name=config["prod_pk"],
+                    )
+
+                loader.cleanup(config["staging_table"], config["prod_table"])
 
             # 4. Log success if we reached the end
             loader.log_run_finish(

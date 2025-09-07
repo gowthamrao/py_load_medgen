@@ -1,11 +1,16 @@
 import io
-import pytest
 import uuid
+import psycopg
+import pytest
 from psycopg.errors import UndefinedTable
 
 from py_load_medgen.loader.postgres import PostgresNativeLoader
 from py_load_medgen.parser import parse_mrconso, stream_mrconso_tsv
-from py_load_medgen.sql.ddl import STAGING_CONCEPTS_DDL, ETL_AUDIT_LOG_DDL
+from py_load_medgen.sql.ddl import (
+    STAGING_CONCEPTS_DDL,
+    PRODUCTION_CONCEPTS_DDL,
+    PRODUCTION_CONCEPTS_INDEXES_DDL
+)
 
 # Sample MRCONSO.RRF data for testing.
 SAMPLE_MRCONSO_DATA = """\
@@ -16,48 +21,39 @@ C0001175|FRE|S|L0162173|PF|S0226654|Y|A27478989||M0000245|D000163|MSHFRE|ET|D000
 
 STAGING_TABLE = "test_staging_concepts"
 PRODUCTION_TABLE = "test_medgen_concepts"
-INDEX_DDLS = [
-    "ALTER TABLE {table_name} ADD CONSTRAINT pk_{table_name} PRIMARY KEY (aui);",
-    "CREATE INDEX idx_{table_name}_cui ON {table_name} (cui);",
-]
 
 
 @pytest.fixture(autouse=True)
-def setup_teardown_tables(postgresql):
+def setup_teardown_tables(postgres_db_dsn):
     """A fixture to ensure tables are dropped before and after each test."""
-    # Setup: Drop tables if they exist to ensure a clean state
-    with postgresql.cursor() as cur:
-        cur.execute(f"DROP TABLE IF EXISTS {STAGING_TABLE} CASCADE;")
-        cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE} CASCADE;")
-        cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE}_old CASCADE;")
-        cur.execute(f"DROP TABLE IF EXISTS etl_audit_log CASCADE;")
+    with psycopg.connect(postgres_db_dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"DROP TABLE IF EXISTS {STAGING_TABLE} CASCADE;")
+            cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE} CASCADE;")
+            cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE}_old CASCADE;")
+            cur.execute(f"DROP TABLE IF EXISTS etl_audit_log CASCADE;")
     yield
-    # Teardown: Drop tables after the test
-    with postgresql.cursor() as cur:
-        cur.execute(f"DROP TABLE IF EXISTS {STAGING_TABLE} CASCADE;")
-        cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE} CASCADE;")
-        cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE}_old CASCADE;")
-        cur.execute(f"DROP TABLE IF EXISTS etl_audit_log CASCADE;")
+    with psycopg.connect(postgres_db_dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(f"DROP TABLE IF EXISTS {STAGING_TABLE} CASCADE;")
+            cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE} CASCADE;")
+            cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE}_old CASCADE;")
+            cur.execute(f"DROP TABLE IF EXISTS etl_audit_log CASCADE;")
 
 
 @pytest.mark.integration
-def test_staging_load_with_raw_record(postgresql):
+def test_staging_load_with_raw_record(postgres_db_dsn):
     """
-    Tests loading data into a staging table using the streaming pipeline
-    and verifies the raw_record column.
+    Tests loading data into a staging table using testcontainers.
     """
-    with PostgresNativeLoader(connection=postgresql, autocommit=False) as loader:
-        # 1. Initialize
+    with PostgresNativeLoader(db_dsn=postgres_db_dsn, autocommit=False) as loader:
         loader.initialize_staging(STAGING_TABLE, STAGING_CONCEPTS_DDL.replace("staging_medgen_concepts", STAGING_TABLE))
-
-        # 2. Parse, Transform, and Load
         file_stream = io.StringIO(SAMPLE_MRCONSO_DATA)
         records_iterator = parse_mrconso(file_stream)
         byte_iterator = stream_mrconso_tsv(records_iterator)
         loader.bulk_load(STAGING_TABLE, byte_iterator)
 
-        # 3. Assert
-        with postgresql.cursor() as cur:
+        with psycopg.connect(postgres_db_dsn) as conn, conn.cursor() as cur:
             cur.execute(f"SELECT COUNT(*), MIN(raw_record) FROM {STAGING_TABLE}")
             count, raw_record = cur.fetchone()
             assert count == 3
@@ -65,26 +61,29 @@ def test_staging_load_with_raw_record(postgresql):
 
 
 @pytest.mark.integration
-def test_full_load_atomic_swap_with_raw_record(postgresql):
+def test_full_load_atomic_swap_with_raw_record(postgres_db_dsn):
     """
-    Tests the full load process, including atomic swap and cleanup,
-    and verifies the raw_record column in the final production table.
+    Tests the full load process using testcontainers.
     """
     backup_table = f"{PRODUCTION_TABLE}_old"
 
-    with PostgresNativeLoader(connection=postgresql, autocommit=False) as loader:
-        # 1. Run the full pipeline
+    with PostgresNativeLoader(db_dsn=postgres_db_dsn, autocommit=False) as loader:
         loader.initialize_staging(STAGING_TABLE, STAGING_CONCEPTS_DDL.replace("staging_medgen_concepts", STAGING_TABLE))
         file_stream = io.StringIO(SAMPLE_MRCONSO_DATA)
         records_iterator = parse_mrconso(file_stream)
         byte_iterator = stream_mrconso_tsv(records_iterator)
         loader.bulk_load(STAGING_TABLE, byte_iterator)
-        loader.apply_changes(STAGING_TABLE, PRODUCTION_TABLE, INDEX_DDLS)
+        loader.apply_changes(
+            mode="full",
+            staging_table=STAGING_TABLE,
+            production_table=PRODUCTION_TABLE,
+            production_ddl=PRODUCTION_CONCEPTS_DDL,
+            index_ddls=PRODUCTION_CONCEPTS_INDEXES_DDL,
+            pk_name="concept_id"
+        )
         loader.cleanup(STAGING_TABLE, PRODUCTION_TABLE)
 
-    # 2. Assert final state
-    with postgresql.cursor() as cur:
-        # Check that data is in the production table
+    with psycopg.connect(postgres_db_dsn) as conn, conn.cursor() as cur:
         cur.execute(f"SELECT COUNT(*) FROM {PRODUCTION_TABLE}")
         assert cur.fetchone()[0] == 3
         cur.execute(f"SELECT cui, str, raw_record FROM {PRODUCTION_TABLE} WHERE aui = 'A0019182'")
@@ -93,7 +92,6 @@ def test_full_load_atomic_swap_with_raw_record(postgresql):
         assert record[1] == "Acquired Immunodeficiency Syndromes"
         assert record[2] == SAMPLE_MRCONSO_DATA.splitlines()[0]
 
-        # Check that the staging and backup tables are gone
         def table_exists(cursor, table_name):
             cursor.execute(
                 "SELECT EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = %s)",
@@ -106,15 +104,14 @@ def test_full_load_atomic_swap_with_raw_record(postgresql):
 
 
 @pytest.mark.integration
-def test_metadata_logging(postgresql):
+def test_metadata_logging(postgres_db_dsn):
     """
-    Tests that the ETL process correctly logs metadata to the audit table.
+    Tests metadata logging using a testcontainers database.
     """
     run_id = uuid.uuid4()
     log_id = None
 
-    with PostgresNativeLoader(connection=postgresql, autocommit=False) as loader:
-        # 1. Log start
+    with PostgresNativeLoader(db_dsn=postgres_db_dsn, autocommit=False) as loader:
         log_id = loader.log_run_start(
             run_id=run_id,
             package_version="0.1.0-test",
@@ -123,14 +120,12 @@ def test_metadata_logging(postgresql):
         )
         assert log_id is not None
 
-        # Check that the 'In Progress' record was written
-        with postgresql.cursor() as cur:
+        with psycopg.connect(postgres_db_dsn) as conn, conn.cursor() as cur:
             cur.execute("SELECT status, package_version FROM etl_audit_log WHERE log_id = %s", (log_id,))
             record = cur.fetchone()
             assert record[0] == "In Progress"
             assert record[1] == "0.1.0-test"
 
-        # 2. Log finish
         loader.log_run_finish(
             log_id,
             status="Succeeded",
@@ -138,8 +133,7 @@ def test_metadata_logging(postgresql):
             records_loaded=95,
         )
 
-        # 3. Assert final state
-        with postgresql.cursor() as cur:
+        with psycopg.connect(postgres_db_dsn) as conn, conn.cursor() as cur:
             cur.execute(
                 "SELECT status, records_extracted, records_loaded, error_message FROM etl_audit_log WHERE log_id = %s",
                 (log_id,),
