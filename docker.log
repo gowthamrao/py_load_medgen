@@ -1,0 +1,2 @@
+time="2025-09-07T22:32:05.060517974Z" level=info msg="Starting up"
+dockerd needs to be started with root privileges. To run dockerd in rootless mode as an unprivileged user, see https://docs.docker.com/go/rootless/

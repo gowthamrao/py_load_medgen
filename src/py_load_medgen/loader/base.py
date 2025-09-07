@@ -45,7 +45,9 @@ class AbstractNativeLoader(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def execute_cdc(self) -> None:
+    def execute_cdc(
+        self, staging_table: str, production_table: str, pk_name: str, business_key: str
+    ) -> dict[str, int]:
         """
         Executes the Change Data Capture (CDC) logic to identify inserts,
         updates, and deletes by comparing staging and production data.
@@ -53,7 +55,16 @@ class AbstractNativeLoader(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def apply_changes(self, staging_table: str, production_table: str, index_ddls: List[str]) -> None:
+    def apply_changes(
+        self,
+        mode: str,
+        staging_table: str,
+        production_table: str,
+        production_ddl: str,
+        index_ddls: list[str],
+        pk_name: str,
+        business_key: str,
+    ) -> None:
         """
         Applies the identified changes (inserts, updates, deletes) to the
         production tables atomically. This could involve a table swap or
