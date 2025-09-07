@@ -28,6 +28,7 @@ class MrconsoRecord:
     srl: str
     suppress: str
     cvf: Optional[str]
+    raw_record: str
 
 
 import csv
@@ -52,6 +53,7 @@ class MedgenName:
     name: str
     source: str
     suppress: str
+    raw_record: str
 
 
 def stream_mrconso_tsv(records: Iterator[MrconsoRecord]) -> Iterator[bytes]:
@@ -81,19 +83,25 @@ def stream_names_tsv(records: Iterator[MedgenName]) -> Iterator[bytes]:
 def parse_mrconso(file_stream: IO[str]) -> Iterator[MrconsoRecord]:
     """
     Parses a pipe-delimited MRCONSO.RRF file stream.
-
     Args:
         file_stream: A text file-like object containing MRCONSO.RRF data.
-
     Yields:
         MrconsoRecord instances for each valid row in the file.
     """
     # The RRF format is pipe-delimited, and each row ends with a pipe.
-    reader = csv.reader(file_stream, delimiter="|", quotechar="\\")
-    for i, row in enumerate(reader):
+    # We can't use the csv module directly with the file_stream iterator
+    # because we need to preserve the raw line.
+    for i, line in enumerate(file_stream):
+        raw_line = line.strip()
+        if not raw_line:
+            continue
+
+        row = raw_line.split("|")
         # After splitting, a valid row will have 19 elements, with the last one being empty.
         if len(row) < 18:
-            logging.warning(f"Skipping malformed row {i+1}: expected 18 columns, found {len(row) - 1}")
+            logging.warning(
+                f"Skipping malformed row {i+1}: expected 18 columns, found {len(row) - 1}"
+            )
             continue
 
         # Unpack the row into the dataclass fields.
@@ -119,6 +127,7 @@ def parse_mrconso(file_stream: IO[str]) -> Iterator[MrconsoRecord]:
                 srl=row[15],
                 suppress=row[16],
                 cvf=row[17] if row[17] else None,
+                raw_record=raw_line,
             )
         except IndexError:
             logging.warning(f"Skipping malformed row {i+1}: not enough columns.")
@@ -127,23 +136,28 @@ def parse_mrconso(file_stream: IO[str]) -> Iterator[MrconsoRecord]:
 def parse_names(file_path: Path) -> Iterator[MedgenName]:
     """
     Parses a gzipped, pipe-delimited NAMES.RRF.gz file.
-
     Args:
         file_path: Path to the gzipped file.
-
     Yields:
         MedgenName instances for each valid row in the file.
     """
     with gzip.open(file_path, "rt", encoding="utf-8") as f:
-        reader = csv.reader(f, delimiter="|")
-        header = next(reader)  # Skip header
-        if not header[0].startswith("#CUI"):
+        # Skip header
+        header = f.readline()
+        if not header.startswith("#CUI"):
             logging.warning("NAMES.RRF file does not have the expected header.")
 
-        for i, row in enumerate(reader):
+        for i, line in enumerate(f):
+            raw_line = line.strip()
+            if not raw_line:
+                continue
+
+            row = raw_line.split("|")
             # Each row should have 5 elements, with the last one being empty.
             if len(row) < 5:
-                logging.warning(f"Skipping malformed row {i+1} in NAMES.RRF: expected 4 columns, found {len(row) - 1}")
+                logging.warning(
+                    f"Skipping malformed row {i+1} in NAMES.RRF: expected 4 columns, found {len(row) - 1}"
+                )
                 continue
 
             yield MedgenName(
@@ -151,4 +165,5 @@ def parse_names(file_path: Path) -> Iterator[MedgenName]:
                 name=row[1],
                 source=row[2],
                 suppress=row[3],
+                raw_record=raw_line,
             )

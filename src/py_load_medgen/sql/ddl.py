@@ -39,7 +39,8 @@ CREATE UNLOGGED TABLE IF NOT EXISTS staging_medgen_concepts (
     str TEXT NOT NULL,
     srl VARCHAR(10) NOT NULL,
     suppress CHAR(1) NOT NULL,
-    cvf VARCHAR(50)
+    cvf VARCHAR(50),
+    raw_record TEXT
 );
 """
 
@@ -48,6 +49,7 @@ CREATE UNLOGGED TABLE IF NOT EXISTS staging_medgen_names (
     cui VARCHAR(10) NOT NULL,
     name TEXT NOT NULL,
     source VARCHAR(40) NOT NULL,
-    suppress CHAR(1) NOT NULL
+    suppress CHAR(1) NOT NULL,
+    raw_record TEXT
 );
 """
