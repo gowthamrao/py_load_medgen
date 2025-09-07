@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "py-load-medgen"
+version = "0.1.0"
+authors = [
+  { name="Gowtham Rao", email="rao@ohdsi.org" },
+]
+description = "A Python package for scalable, reliable, and high-performance ETL of the NCBI MedGen database."
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = []
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]"]
+test = ["pytest", "pytest-mock"]
+
+[project.scripts]
+py-load-medgen = "py_load_medgen.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.mypy]
+mypy_path = "src"
+strict = true
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q"
+testpaths = [
+    "tests",
+]
