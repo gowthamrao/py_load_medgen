@@ -20,7 +20,7 @@ CREATE UNLOGGED TABLE IF NOT EXISTS staging_medgen_concepts (
     stt VARCHAR(20),
     sui VARCHAR(10) NOT NULL,
     ispref CHAR(1),
-    aui VARCHAR(10) PRIMARY KEY,
+    aui VARCHAR(10),
     saui VARCHAR(10),
     scui VARCHAR(50),
     sdui VARCHAR(50),
@@ -44,10 +44,8 @@ class PostgresNativeLoader(AbstractNativeLoader):
     def __init__(self, db_dsn: Optional[str] = None, connection: Optional[psycopg.Connection] = None):
         """
         Initializes the PostgreSQL loader.
-
         Accepts either a DSN string to create a new connection or an existing
         psycopg.Connection object (useful for testing).
-
         Args:
             db_dsn: The database connection string (DSN).
             connection: An existing psycopg.Connection object.
@@ -57,7 +55,9 @@ class PostgresNativeLoader(AbstractNativeLoader):
 
         self.dsn = db_dsn
         self.conn = connection
-        self._managed_connection = connection is None  # Flag to manage connection lifecycle
+        self._managed_connection = connection is None
+        self.staging_table = "staging_medgen_concepts"
+        self.production_table = "medgen_concepts"
 
     def connect(self) -> None:
         """Establishes a connection to the PostgreSQL database if not already connected."""
@@ -77,7 +77,6 @@ class PostgresNativeLoader(AbstractNativeLoader):
             logging.debug("Using pre-existing connection. Connect logic skipped.")
         else:
             raise ConnectionError("Cannot connect without a DSN.")
-
 
     def close(self) -> None:
         """Closes the database connection if it was created and is managed by this loader."""
@@ -101,19 +100,16 @@ class PostgresNativeLoader(AbstractNativeLoader):
         if not self.conn:
             raise ConnectionError("Database connection not established.")
 
-        table_name = "staging_medgen_concepts"
-        logging.info(f"Initializing staging table: {table_name}")
+        logging.info(f"Initializing staging table: {self.staging_table}")
         with self.conn.cursor() as cur:
-            # Use a transaction for the DDL operations
             with self.conn.transaction():
                 cur.execute(STAGING_CONCEPTS_DDL)
-                cur.execute(f"TRUNCATE TABLE {table_name};")
+                cur.execute(f"TRUNCATE TABLE {self.staging_table};")
         logging.info("Staging table initialized successfully.")
 
     def bulk_load(self, table_name: str, data_stream: IO[Any]) -> None:
         """
         Executes a native, high-performance bulk load operation using COPY.
-
         Args:
             table_name: The name of the target staging table.
             data_stream: A file-like object (e.g., StringIO) containing
@@ -125,11 +121,28 @@ class PostgresNativeLoader(AbstractNativeLoader):
         logging.info(f"Starting bulk load into '{table_name}'...")
         with self.conn.cursor() as cur:
             with cur.copy(f"COPY {table_name} FROM STDIN WITH (FORMAT TEXT, NULL '\\N')") as copy:
-                # Read from the stream in chunks to manage memory
                 while chunk := data_stream.read(8192):
                     copy.write(chunk)
-
         logging.info(f"Bulk load into '{table_name}' complete.")
+
+    def _create_and_load_new_production_table(self, cur: psycopg.Cursor, new_production_table: str) -> None:
+        """Creates and loads data into a new production table and builds indexes."""
+        logging.info(f"Creating new production table '{new_production_table}'...")
+
+        cur.execute(f"CREATE TABLE {new_production_table} (LIKE {self.staging_table} INCLUDING ALL);")
+
+        logging.info(f"Loading data from '{self.staging_table}' to '{new_production_table}'...")
+        cur.execute(f"INSERT INTO {new_production_table} SELECT * FROM {self.staging_table};")
+
+        cur.execute(f"ANALYZE {new_production_table};")
+
+        logging.info(f"Creating indexes on '{new_production_table}'...")
+        cur.execute(f"ALTER TABLE {new_production_table} ADD CONSTRAINT pk_{new_production_table} PRIMARY KEY (aui);")
+        cur.execute(f"CREATE INDEX idx_{new_production_table}_cui ON {new_production_table} (cui);")
+        cur.execute(f"CREATE INDEX idx_{new_production_table}_sab ON {new_production_table} (sab);")
+        cur.execute(f"CREATE INDEX idx_{new_production_table}_code ON {new_production_table} (code);")
+
+        logging.info("New production table created and indexed successfully.")
 
     def execute_cdc(self) -> None:
         """Executes the Change Data Capture (CDC) logic (placeholder)."""
@@ -137,11 +150,35 @@ class PostgresNativeLoader(AbstractNativeLoader):
         pass
 
     def apply_changes(self) -> None:
-        """Applies the identified changes atomically (placeholder)."""
-        logging.warning("`apply_changes` is not yet implemented.")
-        pass
+        """Applies the identified changes atomically using the 'atomic swap' method."""
+        if not self.conn:
+            raise ConnectionError("Database connection not established.")
+
+        new_production_table = f"{self.production_table}_new"
+        backup_table = f"{self.production_table}_old"
+
+        logging.info("Applying changes with atomic swap...")
+        with self.conn.cursor() as cur:
+            self._create_and_load_new_production_table(cur, new_production_table)
+
+            logging.info("Performing atomic swap in a single transaction...")
+            with self.conn.transaction():
+                cur.execute(f"DROP TABLE IF EXISTS {backup_table} CASCADE;")
+                cur.execute(f"ALTER TABLE IF EXISTS {self.production_table} RENAME TO {backup_table};")
+                cur.execute(f"ALTER TABLE {new_production_table} RENAME TO {self.production_table};")
+
+        logging.info("Atomic swap complete. Production data is updated.")
 
     def cleanup(self) -> None:
-        """Performs cleanup operations (placeholder)."""
-        logging.warning("`cleanup` is not yet implemented.")
-        pass
+        """Performs cleanup operations by dropping the old backup and staging tables."""
+        if not self.conn:
+            raise ConnectionError("Database connection not established.")
+
+        backup_table = f"{self.production_table}_old"
+
+        logging.info("Performing cleanup...")
+        with self.conn.cursor() as cur:
+            with self.conn.transaction():
+                cur.execute(f"DROP TABLE IF EXISTS {backup_table} CASCADE;")
+                cur.execute(f"DROP TABLE IF EXISTS {self.staging_table} CASCADE;")
+        logging.info(f"Cleanup complete. Dropped tables: {backup_table}, {self.staging_table}")
