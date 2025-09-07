@@ -223,30 +223,99 @@ class PostgresNativeLoader(AbstractNativeLoader):
 
         logging.info("New production table created and indexed successfully.")
 
-    def execute_cdc(self) -> None:
-        """Executes the Change Data Capture (CDC) logic (placeholder)."""
-        logging.warning("`execute_cdc` is not yet implemented.")
-        pass
-
-    def apply_changes(self, staging_table: str, production_table: str, index_ddls: list[str]) -> None:
+    def execute_cdc(self, staging_table: str, production_table: str, pk_name: str) -> dict[str, int]:
         """
-        Applies the identified changes atomically using the 'atomic swap' method.
+        Executes Change Data Capture (CDC) logic using SQL.
+        This method identifies inserts, updates, and deletes by comparing the
+        staging table to the production table. For simplicity in this implementation,
+        updates are treated as a soft-delete of the old record and an insert of the new one.
         Args:
-            staging_table: The name of the staging table containing the new data.
-            production_table: The name of the production table to be updated.
-            index_ddls: A list of DDL statements to create indexes on the new production table.
-                        Use a `{table_name}` placeholder for the table name.
+            staging_table: The name of the staging table.
+            production_table: The name of the production table.
+            pk_name: The name of the primary key column of the production table.
+        Returns:
+            A dictionary with counts of records to be inserted and deleted.
         """
+        if not self.conn:
+            raise ConnectionError("Database connection not established.")
+
+        logging.info(f"Executing CDC for {production_table}...")
+        with self.conn.cursor() as cur:
+            # Create temporary tables to store the IDs of records to be changed
+            cur.execute("CREATE TEMP TABLE cdc_deletes (id BIGINT) ON COMMIT DROP;")
+            cur.execute("CREATE TEMP TABLE cdc_inserts (LIKE staging_medgen_names INCLUDING DEFAULTS) ON COMMIT DROP;")
+
+            # --- Identify Deletes ---
+            # Find records in production that are NOT in the new staging data.
+            # These will be marked as inactive (soft-deleted).
+            # This logic assumes 'name' is the business key for a record.
+            sql_find_deletes = f"""
+                INSERT INTO cdc_deletes (id)
+                SELECT p.{pk_name}
+                FROM {production_table} p
+                LEFT JOIN {staging_table} s ON p.name = s.name
+                WHERE s.cui IS NULL AND p.is_active = true;
+            """
+            cur.execute(sql_find_deletes)
+            delete_count = cur.rowcount
+
+            # --- Identify Inserts ---
+            # Find records in staging that are NOT in the current active production data.
+            sql_find_inserts = f"""
+                INSERT INTO cdc_inserts
+                SELECT s.*
+                FROM {staging_table} s
+                LEFT JOIN {production_table} p ON s.name = p.name AND p.is_active = true
+                WHERE p.{pk_name} IS NULL;
+            """
+            cur.execute(sql_find_inserts)
+            insert_count = cur.rowcount
+
+        logging.info(f"CDC complete. Inserts: {insert_count}, Deletes: {delete_count}")
+        return {"inserts": insert_count, "deletes": delete_count}
+
+    def apply_changes(
+        self,
+        mode: str,
+        staging_table: str,
+        production_table: str,
+        production_ddl: str,
+        index_ddls: list[str],
+        pk_name: str,
+    ) -> None:
+        """
+        Applies changes to the production table based on the load mode.
+        - 'full': Performs an atomic swap (rename and replace).
+        - 'delta': Applies inserts and soft deletes identified by CDC.
+        """
+        if mode == "full":
+            self._apply_full_load(staging_table, production_table, production_ddl, index_ddls)
+        elif mode == "delta":
+            self._apply_delta_load(staging_table, production_table, pk_name)
+        else:
+            raise ValueError(f"Unknown load mode: {mode}")
+
+    def _apply_full_load(
+        self, staging_table: str, production_table: str, production_ddl: str, index_ddls: list[str]
+    ) -> None:
+        """Applies changes atomically using the 'atomic swap' method for a full load."""
         if not self.conn:
             raise ConnectionError("Database connection not established.")
 
         new_production_table = f"{production_table}_new"
         backup_table = f"{production_table}_old"
 
-        logging.info(f"Applying changes for table {production_table} with atomic swap...")
+        logging.info(f"Applying FULL load for table {production_table} with atomic swap...")
         with self.conn.cursor() as cur:
-            self._create_and_load_new_production_table(cur, new_production_table, staging_table, index_ddls)
+            # Create the new production table using the explicit DDL
+            cur.execute(production_ddl.format(table_name=new_production_table))
+            # Load data from staging
+            cur.execute(f"INSERT INTO {new_production_table} (cui, name, source, suppress, raw_record) SELECT cui, name, source, suppress, raw_record FROM {staging_table};")
+            # Create indexes
+            for index_ddl in index_ddls:
+                cur.execute(index_ddl.format(table_name=new_production_table))
 
+            # Perform the atomic swap
             logging.info("Performing atomic swap in a single transaction...")
             with self.conn.transaction():
                 cur.execute(f"DROP TABLE IF EXISTS {backup_table} CASCADE;")
@@ -254,6 +323,33 @@ class PostgresNativeLoader(AbstractNativeLoader):
                 cur.execute(f"ALTER TABLE {new_production_table} RENAME TO {production_table};")
 
         logging.info(f"Atomic swap complete for {production_table}. Production data is updated.")
+
+    def _apply_delta_load(self, staging_table: str, production_table: str, pk_name: str) -> None:
+        """Applies inserts and soft deletes for a delta load."""
+        if not self.conn:
+            raise ConnectionError("Database connection not established.")
+
+        logging.info(f"Applying DELTA load for table {production_table}...")
+        with self.conn.cursor() as cur:
+            with self.conn.transaction():
+                # Apply soft deletes
+                sql_delete = f"""
+                    UPDATE {production_table}
+                    SET is_active = false, last_updated_at = NOW()
+                    WHERE {pk_name} IN (SELECT id FROM cdc_deletes);
+                """
+                cur.execute(sql_delete)
+                logging.info(f"Applied {cur.rowcount} soft deletes.")
+
+                # Apply inserts
+                sql_insert = f"""
+                    INSERT INTO {production_table} (cui, name, source, suppress, raw_record)
+                    SELECT cui, name, source, suppress, raw_record FROM cdc_inserts;
+                """
+                cur.execute(sql_insert)
+                logging.info(f"Applied {cur.rowcount} inserts.")
+
+        logging.info(f"Delta load for {production_table} complete.")
 
     def cleanup(self, staging_table: str, production_table: str) -> None:
         """
