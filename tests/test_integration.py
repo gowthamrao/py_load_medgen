@@ -41,9 +41,10 @@ def setup_teardown_tables(postgresql):
 
 
 @pytest.mark.integration
-def test_staging_load(postgresql):
+def test_staging_load_with_raw_record(postgresql):
     """
-    Tests loading data into a staging table using the streaming pipeline.
+    Tests loading data into a staging table using the streaming pipeline
+    and verifies the raw_record column.
     """
     with PostgresNativeLoader(connection=postgresql, autocommit=False) as loader:
         # 1. Initialize
@@ -57,14 +58,17 @@ def test_staging_load(postgresql):
 
         # 3. Assert
         with postgresql.cursor() as cur:
-            cur.execute(f"SELECT COUNT(*) FROM {STAGING_TABLE}")
-            assert cur.fetchone()[0] == 3
+            cur.execute(f"SELECT COUNT(*), MIN(raw_record) FROM {STAGING_TABLE}")
+            count, raw_record = cur.fetchone()
+            assert count == 3
+            assert raw_record == SAMPLE_MRCONSO_DATA.splitlines()[0]
 
 
 @pytest.mark.integration
-def test_full_load_atomic_swap(postgresql):
+def test_full_load_atomic_swap_with_raw_record(postgresql):
     """
-    Tests the full load process, including atomic swap and cleanup.
+    Tests the full load process, including atomic swap and cleanup,
+    and verifies the raw_record column in the final production table.
     """
     backup_table = f"{PRODUCTION_TABLE}_old"
 
@@ -83,10 +87,11 @@ def test_full_load_atomic_swap(postgresql):
         # Check that data is in the production table
         cur.execute(f"SELECT COUNT(*) FROM {PRODUCTION_TABLE}")
         assert cur.fetchone()[0] == 3
-        cur.execute(f"SELECT cui, str FROM {PRODUCTION_TABLE} WHERE aui = 'A0019182'")
+        cur.execute(f"SELECT cui, str, raw_record FROM {PRODUCTION_TABLE} WHERE aui = 'A0019182'")
         record = cur.fetchone()
         assert record[0] == "C0001175"
         assert record[1] == "Acquired Immunodeficiency Syndromes"
+        assert record[2] == SAMPLE_MRCONSO_DATA.splitlines()[0]
 
         # Check that the staging and backup tables are gone
         def table_exists(cursor, table_name):

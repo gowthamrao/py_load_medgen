@@ -1,17 +1,18 @@
 import gzip
+import io
 from pathlib import Path
 
-from py_load_medgen.parser import MedgenName, parse_names
+from py_load_medgen.parser import MedgenName, MrconsoRecord, parse_names, parse_mrconso
 
 
-def test_parse_names(tmp_path: Path):
+def test_parse_names_and_raw_record(tmp_path: Path):
     """
     Tests that the parse_names function correctly parses a gzipped,
-    pipe-delimited NAMES.RRF file.
+    pipe-delimited NAMES.RRF file and captures the raw record.
     """
     # 1. Arrange: Create a dummy gzipped NAMES.RRF file
     file_path = tmp_path / "NAMES.RRF.gz"
-    content = [
+    content_lines = [
         "#CUI|name|source|SUPPRESS|",
         "C0000727|Acute abdomen|GTR|N|",
         "C0000729|Abdominal cramps|GTR|N|",
@@ -21,15 +22,55 @@ def test_parse_names(tmp_path: Path):
         "C0000736|Missing pipe", # Malformed row
     ]
     with gzip.open(file_path, "wt", encoding="utf-8") as f:
-        f.write("\n".join(content))
+        f.write("\n".join(content_lines))
 
     # 2. Act: Parse the file
     records = list(parse_names(file_path))
 
     # 3. Assert
     assert len(records) == 5
-    assert records[0] == MedgenName(cui="C0000727", name="Acute abdomen", source="GTR", suppress="N")
-    assert records[1] == MedgenName(cui="C0000729", name="Abdominal cramps", source="GTR", suppress="N")
-    assert records[2] == MedgenName(cui="C0000731", name="Abdominal distention", source="GTR", suppress="Y")
-    assert records[3] == MedgenName(cui="C0000734", name="Abdominal mass", source="GTR", suppress="N")
-    assert records[4] == MedgenName(cui="C0000735", name="", source="GTR", suppress="N")
+    assert records[0] == MedgenName(
+        cui="C0000727", name="Acute abdomen", source="GTR", suppress="N", raw_record=content_lines[1]
+    )
+    assert records[1] == MedgenName(
+        cui="C0000729", name="Abdominal cramps", source="GTR", suppress="N", raw_record=content_lines[2]
+    )
+    assert records[2] == MedgenName(
+        cui="C0000731", name="Abdominal distention", source="GTR", suppress="Y", raw_record=content_lines[3]
+    )
+    assert records[3] == MedgenName(
+        cui="C0000734", name="Abdominal mass", source="GTR", suppress="N", raw_record=content_lines[4]
+    )
+    assert records[4] == MedgenName(
+        cui="C0000735", name="", source="GTR", suppress="N", raw_record=content_lines[5]
+    )
+
+
+def test_parse_mrconso_and_raw_record():
+    """
+    Tests that the parse_mrconso function correctly parses a pipe-delimited
+    MRCONSO.RRF file stream and captures the raw record.
+    """
+    # 1. Arrange: Create a dummy MRCONSO.RRF file stream
+    content_lines = [
+        "C0000005|ENG|P|L0000005|PF|S0007492|Y|A26634265||M0019694|D012711|MSH|PEN|D012711|(131)I-Macroaggregated Albumin|0|N|256|",
+        "C0000039|ENG|P|L0000039|PF|S0007563|Y|A26634304||M0023172|D015060|MSH|PEP|D015060|1,2-Dipalmitoylphosphatidylcholine|3|N||",
+        "C0000039|ENG|S|L0000039|VO|S0007564|N|A26634305||M0023172|D015060|MSH|EN|D015060|1,2 Dipalmitoylphosphatidylcholine|3|N|256|",
+        "C0000039|ENG|S|L0000039|VO|S0352885|N|A29142011||M0023172|D015060|MSH|ET|D015060|1,2-Dipalmitoyl Phosphatidylcholine|3|N|256|",
+    ]
+    file_stream = io.StringIO("\n".join(content_lines))
+
+    # 2. Act: Parse the file
+    records = list(parse_mrconso(file_stream))
+
+    # 3. Assert
+    assert len(records) == 4
+    assert records[0] == MrconsoRecord(
+        cui='C0000005', lat='ENG', ts='P', lui='L0000005', stt='PF', sui='S0007492', ispref='Y', aui='A26634265',
+        saui=None, scui='M0019694', sdui='D012711', sab='MSH', tty='PEN', code='D012711',
+        str='(131)I-Macroaggregated Albumin', srl='0', suppress='N', cvf='256', raw_record=content_lines[0]
+    )
+    assert records[1].cui == "C0000039"
+    assert records[1].raw_record == content_lines[1]
+    assert records[3].ispref == "N"
+    assert records[3].raw_record == content_lines[3]

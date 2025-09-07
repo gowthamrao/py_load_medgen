@@ -9,7 +9,7 @@ from importlib import metadata
 from typing import Iterator, TypeVar
 
 from py_load_medgen.downloader import Downloader
-from py_load_medgen.loader.postgres import PostgresNativeLoader
+from py_load_medgen.loader.factory import LoaderFactory
 from py_load_medgen.sql.ddl import STAGING_CONCEPTS_DDL, STAGING_NAMES_DDL
 from py_load_medgen.parser import (
     parse_mrconso,
@@ -153,7 +153,7 @@ def main():
     total_records_loaded = 0
 
     try:
-        with PostgresNativeLoader(db_dsn=args.db_dsn) as loader:
+        with LoaderFactory.create_loader(db_dsn=args.db_dsn) as loader:
             # 1. Log the start of the run
             log_id = loader.log_run_start(
                 run_id=run_id,
@@ -226,7 +226,7 @@ def main():
         if log_id is not None:
             # Use a new loader connection in case the old one is broken
             try:
-                with PostgresNativeLoader(db_dsn=args.db_dsn) as error_loader:
+                with LoaderFactory.create_loader(db_dsn=args.db_dsn) as error_loader:
                     error_loader.log_run_finish(
                         log_id,
                         status="Failed",
