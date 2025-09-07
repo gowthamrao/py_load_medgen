@@ -13,16 +13,21 @@ from py_load_medgen.loader.factory import LoaderFactory
 from py_load_medgen.sql.ddl import (
     STAGING_CONCEPTS_DDL,
     STAGING_NAMES_DDL,
+    STAGING_SEMANTIC_TYPES_DDL,
     PRODUCTION_CONCEPTS_DDL,
     PRODUCTION_NAMES_DDL,
+    PRODUCTION_SEMANTIC_TYPES_DDL,
     PRODUCTION_CONCEPTS_INDEXES_DDL,
     PRODUCTION_NAMES_INDEXES_DDL,
+    PRODUCTION_SEMANTIC_TYPES_INDEXES_DDL,
 )
 from py_load_medgen.parser import (
     parse_mrconso,
     stream_mrconso_tsv,
     parse_names,
     stream_names_tsv,
+    parse_mrsty,
+    stream_mrsty_tsv,
 )
 
 # Configure logging
@@ -46,6 +51,17 @@ ETL_CONFIG = [
         "prod_ddl": PRODUCTION_CONCEPTS_DDL,
         "prod_pk": "concept_id",
         "index_ddls": PRODUCTION_CONCEPTS_INDEXES_DDL,
+    },
+    {
+        "file": "MRSTY.RRF",
+        "parser": parse_mrsty,
+        "transformer": stream_mrsty_tsv,
+        "staging_table": "staging_medgen_semantic_types",
+        "staging_ddl": STAGING_SEMANTIC_TYPES_DDL,
+        "prod_table": "medgen_semantic_types",
+        "prod_ddl": PRODUCTION_SEMANTIC_TYPES_DDL,
+        "prod_pk": "semantic_type_id",
+        "index_ddls": PRODUCTION_SEMANTIC_TYPES_INDEXES_DDL,
     },
     {
         "file": "NAMES.RRF.gz",
@@ -129,6 +145,10 @@ def main():
         with Downloader(
             ftp_host=NCBI_FTP_HOST, ftp_path=NCBI_FTP_PATH
         ) as downloader:
+            # Get release version from README
+            release_version = downloader.get_release_version()
+            logging.info(f"MedGen Release Version: {release_version}")
+
             ftp_files = downloader.list_files()
             checksum_file = next((f for f in ftp_files if "md5" in f.lower()), None)
             checksums = {}
@@ -141,11 +161,15 @@ def main():
                 )
 
             for config in ETL_CONFIG:
-                remote_file, _, _, _, _, _, _ = config
+                remote_file = config["file"]
                 local_path = download_dir / Path(remote_file).name
                 downloader.download_file(remote_file, local_path, checksums)
                 local_file_paths[remote_file] = local_path
+                # Prepare source file info for logging
                 source_file_checksums[remote_file] = checksums.get(remote_file)
+
+        # Add release version to the source file metadata
+        source_file_checksums["release_version"] = release_version
 
     except Exception as e:
         logging.error(f"Failed during download phase: {e}", exc_info=True)

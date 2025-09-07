@@ -109,3 +109,58 @@ def test_downloader_checksum_verification(tmp_path: Path, monkeypatch: pytest.Mo
 
     # Assert that the corrupted file was cleaned up
     assert not local_filepath_fail.exists()
+
+
+def test_get_release_version(monkeypatch: pytest.MonkeyPatch):
+    """
+    Tests the parsing of the release version from a mocked README file.
+    """
+    mock_ftp_instance = MagicMock()
+    monkeypatch.setattr(ftplib, "FTP", MagicMock(return_value=mock_ftp_instance))
+
+    # --- Test Case 1: Version Found ---
+    # Arrange
+    def fake_retrlines_found(command, callback):
+        if "README" in command:
+            callback("Some header text")
+            callback("Last update: September 5, 2025")
+            callback("Some other text")
+
+    mock_ftp_instance.retrlines.side_effect = fake_retrlines_found
+
+    # Act
+    with Downloader() as downloader:
+        version = downloader.get_release_version()
+
+    # Assert
+    assert version == "September 5, 2025"
+    mock_ftp_instance.retrlines.assert_called_once_with("RETR README", ANY)
+
+    # --- Test Case 2: Version Not Found ---
+    # Arrange
+    mock_ftp_instance.reset_mock()
+    def fake_retrlines_not_found(command, callback):
+        if "README" in command:
+            callback("Some header text")
+            callback("Just some random text without a date")
+
+    mock_ftp_instance.retrlines.side_effect = fake_retrlines_not_found
+
+    # Act
+    with Downloader() as downloader:
+        version = downloader.get_release_version()
+
+    # Assert
+    assert version == "Unknown"
+
+    # --- Test Case 3: README file does not exist ---
+    # Arrange
+    mock_ftp_instance.reset_mock()
+    mock_ftp_instance.retrlines.side_effect = ftplib.error_perm("550 No such file")
+
+    # Act
+    with Downloader() as downloader:
+        version = downloader.get_release_version()
+
+    # Assert
+    assert version == "Unknown"

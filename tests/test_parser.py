@@ -2,7 +2,14 @@ import gzip
 import io
 from pathlib import Path
 
-from py_load_medgen.parser import MedgenName, MrconsoRecord, parse_names, parse_mrconso
+from py_load_medgen.parser import (
+    MedgenName,
+    MrconsoRecord,
+    parse_names,
+    parse_mrconso,
+    MrstyRecord,
+    parse_mrsty,
+)
 
 
 def test_parse_names_and_raw_record(tmp_path: Path):
@@ -74,3 +81,45 @@ def test_parse_mrconso_and_raw_record():
     assert records[1].raw_record == content_lines[1]
     assert records[3].ispref == "N"
     assert records[3].raw_record == content_lines[3]
+
+
+def test_parse_mrsty():
+    """
+    Tests that the parse_mrsty function correctly parses a pipe-delimited
+    MRSTY.RRF file stream.
+    """
+    # 1. Arrange
+    content_lines = [
+        "C0000052|T029|B1.2.1.2.1|Body Part, Organ, or Organ Component|||",
+        "C0000052|T060|B2.2.1.2|Diagnostic Procedure|||",
+        "C0000074|T033|B1.2.1.1|Finding|AT12345|CVF123|", # All fields present
+        "C0000074|T047|B2.2.1.2.1|Disease or Syndrome|||",
+        "C0000097|T121|B4|Pharmacologic Substance|||",
+        "C0000102|T061|B2.2.1.2.2|Therapeutic or Preventive Procedure", # Malformed row
+    ]
+    file_stream = io.StringIO("\n".join(content_lines))
+
+    # 2. Act
+    records = list(parse_mrsty(file_stream))
+
+    # 3. Assert
+    assert len(records) == 5
+    assert records[0] == MrstyRecord(
+        cui="C0000052",
+        tui="T029",
+        stn="B1.2.1.2.1",
+        sty="Body Part, Organ, or Organ Component",
+        atui=None,
+        cvf=None,
+        raw_record=content_lines[0],
+    )
+    assert records[2] == MrstyRecord(
+        cui="C0000074",
+        tui="T033",
+        stn="B1.2.1.1",
+        sty="Finding",
+        atui="AT12345",
+        cvf="CVF123",
+        raw_record=content_lines[2],
+    )
+    assert records[4].cui == "C0000097"

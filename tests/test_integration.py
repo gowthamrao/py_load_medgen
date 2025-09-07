@@ -5,11 +5,14 @@ import pytest
 from psycopg.errors import UndefinedTable
 
 from py_load_medgen.loader.postgres import PostgresNativeLoader
-from py_load_medgen.parser import parse_mrconso, stream_mrconso_tsv
+from py_load_medgen.parser import parse_mrconso, stream_mrconso_tsv, parse_mrsty, stream_mrsty_tsv
 from py_load_medgen.sql.ddl import (
     STAGING_CONCEPTS_DDL,
     PRODUCTION_CONCEPTS_DDL,
-    PRODUCTION_CONCEPTS_INDEXES_DDL
+    PRODUCTION_CONCEPTS_INDEXES_DDL,
+    STAGING_SEMANTIC_TYPES_DDL,
+    PRODUCTION_SEMANTIC_TYPES_DDL,
+    PRODUCTION_SEMANTIC_TYPES_INDEXES_DDL,
 )
 
 # Sample MRCONSO.RRF data for testing.
@@ -143,3 +146,70 @@ def test_metadata_logging(postgres_db_dsn):
             assert record[1] == 100
             assert record[2] == 95
             assert record[3] is None
+
+
+@pytest.mark.integration
+def test_full_load_semantic_types(postgres_db_dsn):
+    """
+    Tests the full load ETL process for the semantic types (MRSTY.RRF) data.
+    """
+    # 1. Arrange: Define constants and sample data
+    staging_table = "test_staging_semantic_types"
+    production_table = "test_medgen_semantic_types"
+    backup_table = f"{production_table}_old"
+    sample_mrsty_data = """\
+C0000052|T029|B1.2.1.2.1|Body Part, Organ, or Organ Component|||
+C0000074|T033|B1.2.1.1|Finding|AT12345|CVF123|
+C0000097|T121|B4|Pharmacologic Substance|||
+"""
+
+    # 2. Act: Run the ETL process
+    with PostgresNativeLoader(db_dsn=postgres_db_dsn, autocommit=False) as loader:
+        # Initialize staging
+        loader.initialize_staging(
+            staging_table,
+            STAGING_SEMANTIC_TYPES_DDL.replace("staging_medgen_semantic_types", staging_table)
+        )
+
+        # Parse and bulk load
+        file_stream = io.StringIO(sample_mrsty_data)
+        records_iterator = parse_mrsty(file_stream)
+        byte_iterator = stream_mrsty_tsv(records_iterator)
+        loader.bulk_load(staging_table, byte_iterator)
+
+        # Apply changes (atomic swap)
+        loader.apply_changes(
+            mode="full",
+            staging_table=staging_table,
+            production_table=production_table,
+            production_ddl=PRODUCTION_SEMANTIC_TYPES_DDL,
+            index_ddls=PRODUCTION_SEMANTIC_TYPES_INDEXES_DDL,
+            pk_name="semantic_type_id" # pk_name is not used for full load, but required by signature
+        )
+
+        # Clean up
+        loader.cleanup(staging_table, production_table)
+
+    # 3. Assert: Verify the final state of the database
+    with psycopg.connect(postgres_db_dsn) as conn, conn.cursor() as cur:
+        # Check production table content
+        cur.execute(f"SELECT COUNT(*) FROM {production_table}")
+        assert cur.fetchone()[0] == 3
+
+        cur.execute(f"SELECT cui, sty, atui, cvf FROM {production_table} WHERE tui = 'T033'")
+        record = cur.fetchone()
+        assert record[0] == "C0000074"
+        assert record[1] == "Finding"
+        assert record[2] == "AT12345"
+        assert record[3] == "CVF123"
+
+        # Check that staging and backup tables are gone
+        def table_exists(cursor, table_name):
+            cursor.execute(
+                "SELECT EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = %s)",
+                (table_name,),
+            )
+            return cursor.fetchone()[0]
+
+        assert not table_exists(cur, staging_table)
+        assert not table_exists(cur, backup_table)
