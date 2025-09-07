@@ -39,8 +39,20 @@ from typing import IO, Iterator
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 
+import gzip
 import io
 from dataclasses import fields
+
+
+@dataclass(frozen=True)
+class MedgenName:
+    """Represents a single record from the NAMES.RRF file."""
+
+    cui: str
+    name: str
+    source: str
+    suppress: str
+
 
 def records_to_tsv(records: Iterator[MrconsoRecord]) -> io.StringIO:
     """Converts an iterator of MrconsoRecord objects to a TSV in-memory file."""
@@ -49,6 +61,19 @@ def records_to_tsv(records: Iterator[MrconsoRecord]) -> io.StringIO:
     for record in records:
         line = "\t".join(
             # Convert None to the string \N for PostgreSQL's COPY command
+            str(getattr(record, field.name) or r"\N")
+            for field in fields(record)
+        )
+        buffer.write(line + "\n")
+    buffer.seek(0)
+    return buffer
+
+
+def names_records_to_tsv(records: Iterator[MedgenName]) -> io.StringIO:
+    """Converts an iterator of MedgenName objects to a TSV in-memory file."""
+    buffer = io.StringIO()
+    for record in records:
+        line = "\t".join(
             str(getattr(record, field.name) or r"\N")
             for field in fields(record)
         )
@@ -101,3 +126,33 @@ def parse_mrconso(file_stream: IO[str]) -> Iterator[MrconsoRecord]:
             )
         except IndexError:
             logging.warning(f"Skipping malformed row {i+1}: not enough columns.")
+
+
+def parse_names(file_path: Path) -> Iterator[MedgenName]:
+    """
+    Parses a gzipped, pipe-delimited NAMES.RRF.gz file.
+
+    Args:
+        file_path: Path to the gzipped file.
+
+    Yields:
+        MedgenName instances for each valid row in the file.
+    """
+    with gzip.open(file_path, "rt", encoding="utf-8") as f:
+        reader = csv.reader(f, delimiter="|")
+        header = next(reader)  # Skip header
+        if not header[0].startswith("#CUI"):
+            logging.warning("NAMES.RRF file does not have the expected header.")
+
+        for i, row in enumerate(reader):
+            # Each row should have 5 elements, with the last one being empty.
+            if len(row) < 5:
+                logging.warning(f"Skipping malformed row {i+1} in NAMES.RRF: expected 4 columns, found {len(row) - 1}")
+                continue
+
+            yield MedgenName(
+                cui=row[0],
+                name=row[1],
+                source=row[2],
+                suppress=row[3],
+            )

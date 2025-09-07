@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 from typing import Optional
 
+import hashlib
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Configure logging
@@ -40,17 +41,87 @@ class Downloader:
             self.ftp.quit()
             logging.info("FTP connection closed.")
 
+    def list_files(self) -> list[str]:
+        """Lists files in the current FTP directory."""
+        if not self.ftp:
+            raise ConnectionError("FTP connection not established.")
+        return self.ftp.nlst()
+
+    def get_checksums(self, checksum_filename: str = "md5sum.txt") -> dict[str, str]:
+        """
+        Downloads and parses the checksum file.
+        Args:
+            checksum_filename: The name of the checksum file on the FTP server.
+        Returns:
+            A dictionary mapping filenames to their expected MD5 checksums.
+        """
+        if not self.ftp:
+            raise ConnectionError("FTP connection not established.")
+
+        checksums: dict[str, str] = {}
+        try:
+            lines: list[str] = []
+            self.ftp.retrlines(f"RETR {checksum_filename}", lines.append)
+            for line in lines:
+                # Format is typically: <checksum>  <filename>
+                parts = line.split()
+                if len(parts) == 2:
+                    checksum, filename = parts
+                    # The filenames in md5sum.txt might have a './' prefix
+                    checksums[filename.lstrip("./")] = checksum
+            return checksums
+        except ftplib.all_errors as e:
+            logging.warning(f"Could not find or parse checksum file '{checksum_filename}': {e}")
+            return {} # Return empty dict if checksums aren't available
+
+    @staticmethod
+    def _calculate_md5(filepath: Path) -> str:
+        """Calculates the MD5 checksum of a local file."""
+        hash_md5 = hashlib.md5()
+        with open(filepath, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                hash_md5.update(chunk)
+        return hash_md5.hexdigest()
+
+    def verify_file(self, local_filepath: Path, checksums: dict[str, str]) -> bool:
+        """
+        Verifies the integrity of a downloaded file using its MD5 checksum.
+        Args:
+            local_filepath: The path to the local file.
+            checksums: A dictionary of filenames and their expected checksums.
+        Returns:
+            True if the file is valid, False otherwise.
+        """
+        filename = local_filepath.name
+        if filename not in checksums:
+            logging.warning(f"No checksum found for {filename}. Skipping verification.")
+            return True # Cannot verify, so assume it's okay for now.
+
+        expected_md5 = checksums[filename]
+        logging.info(f"Verifying checksum for {filename}...")
+        actual_md5 = self._calculate_md5(local_filepath)
+
+        if actual_md5 == expected_md5:
+            logging.info(f"Checksum valid for {filename}.")
+            return True
+        else:
+            logging.error(f"Checksum mismatch for {filename}! Expected: {expected_md5}, Got: {actual_md5}")
+            return False
+
     @retry(
         wait=wait_exponential(multiplier=1, min=2, max=60),
         stop=stop_after_attempt(5),
         reraise=True,
     )
-    def download_file(self, remote_filename: str, local_filepath: Path) -> None:
+    def download_file(
+        self, remote_filename: str, local_filepath: Path, checksums: Optional[dict[str, str]] = None
+    ) -> None:
         """
-        Downloads a single file from the FTP server with exponential backoff.
+        Downloads a single file from the FTP server and verifies its checksum.
         Args:
             remote_filename: The name of the file on the FTP server.
             local_filepath: The local path to save the downloaded file.
+            checksums: A dictionary of checksums to verify against. If None, verification is skipped.
         """
         if not self.ftp:
             raise ConnectionError("FTP connection not established. Use within a 'with' statement.")
@@ -61,8 +132,14 @@ class Downloader:
             with open(local_filepath, "wb") as f:
                 self.ftp.retrbinary(f"RETR {remote_filename}", f.write)
             logging.info(f"Successfully downloaded {remote_filename}")
-        except ftplib.all_errors as e:
-            logging.error(f"FTP error while downloading {remote_filename}: {e}")
+
+            if checksums:
+                if not self.verify_file(local_filepath, checksums):
+                    raise ValueError(f"Checksum validation failed for {remote_filename}")
+
+        except (*ftplib.all_errors, ValueError) as e:
+            logging.error(f"Error during download or verification of {remote_filename}: {e}")
+            # Clean up partially downloaded file
             if local_filepath.exists():
                 local_filepath.unlink()
             raise
