@@ -14,12 +14,15 @@ from py_load_medgen.sql.ddl import (
     STAGING_CONCEPTS_DDL,
     STAGING_NAMES_DDL,
     STAGING_SEMANTIC_TYPES_DDL,
+    STAGING_MEDGEN_HPO_MAPPING_DDL,
     PRODUCTION_CONCEPTS_DDL,
     PRODUCTION_NAMES_DDL,
     PRODUCTION_SEMANTIC_TYPES_DDL,
+    PRODUCTION_MEDGEN_HPO_MAPPING_DDL,
     PRODUCTION_CONCEPTS_INDEXES_DDL,
     PRODUCTION_NAMES_INDEXES_DDL,
     PRODUCTION_SEMANTIC_TYPES_INDEXES_DDL,
+    PRODUCTION_MEDGEN_HPO_MAPPING_INDEXES_DDL,
 )
 from py_load_medgen.parser import (
     parse_mrconso,
@@ -28,6 +31,8 @@ from py_load_medgen.parser import (
     stream_names_tsv,
     parse_mrsty,
     stream_mrsty_tsv,
+    parse_hpo_mapping,
+    stream_hpo_mapping_tsv,
 )
 
 # Configure logging
@@ -76,6 +81,18 @@ ETL_CONFIG = [
         "prod_pk": "name_id",
         "business_key": "name",
         "index_ddls": PRODUCTION_NAMES_INDEXES_DDL,
+    },
+    {
+        "file": "MedGen_HPO_Mapping.txt.gz",
+        "parser": parse_hpo_mapping,
+        "transformer": stream_hpo_mapping_tsv,
+        "staging_table": "staging_medgen_hpo_mapping",
+        "staging_ddl": STAGING_MEDGEN_HPO_MAPPING_DDL,
+        "prod_table": "medgen_hpo_mapping",
+        "prod_ddl": PRODUCTION_MEDGEN_HPO_MAPPING_DDL,
+        "prod_pk": "hpo_mapping_id",
+        "business_key": "sdui", # Assuming SDUI (source ID) is a stable business key
+        "index_ddls": PRODUCTION_MEDGEN_HPO_MAPPING_INDEXES_DDL,
     },
 ]
 

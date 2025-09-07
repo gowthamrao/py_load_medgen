@@ -4,8 +4,18 @@ import psycopg
 import pytest
 from psycopg.errors import UndefinedTable
 
+import gzip
+from pathlib import Path
+
 from py_load_medgen.loader.postgres import PostgresNativeLoader
-from py_load_medgen.parser import parse_mrconso, stream_mrconso_tsv, parse_mrsty, stream_mrsty_tsv
+from py_load_medgen.parser import (
+    parse_mrconso,
+    stream_mrconso_tsv,
+    parse_mrsty,
+    stream_mrsty_tsv,
+    parse_hpo_mapping,
+    stream_hpo_mapping_tsv,
+)
 from py_load_medgen.sql.ddl import (
     STAGING_CONCEPTS_DDL,
     PRODUCTION_CONCEPTS_DDL,
@@ -13,6 +23,9 @@ from py_load_medgen.sql.ddl import (
     STAGING_SEMANTIC_TYPES_DDL,
     PRODUCTION_SEMANTIC_TYPES_DDL,
     PRODUCTION_SEMANTIC_TYPES_INDEXES_DDL,
+    STAGING_MEDGEN_HPO_MAPPING_DDL,
+    PRODUCTION_MEDGEN_HPO_MAPPING_DDL,
+    PRODUCTION_MEDGEN_HPO_MAPPING_INDEXES_DDL,
 )
 
 # Sample MRCONSO.RRF data for testing.
@@ -204,6 +217,76 @@ C0000097|T121|B4|Pharmacologic Substance|||
         assert record[3] == "CVF123"
 
         # Check that staging and backup tables are gone
+        def table_exists(cursor, table_name):
+            cursor.execute(
+                "SELECT EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = %s)",
+                (table_name,),
+            )
+            return cursor.fetchone()[0]
+
+        assert not table_exists(cur, staging_table)
+        assert not table_exists(cur, backup_table)
+
+
+@pytest.mark.integration
+def test_full_load_hpo_mapping(postgres_db_dsn, tmp_path: Path):
+    """
+    Tests the full load ETL process for the HPO Mapping data.
+    """
+    # 1. Arrange: Define constants and sample data
+    staging_table = "test_staging_hpo_mapping"
+    production_table = "test_medgen_hpo_mapping"
+    backup_table = f"{production_table}_old"
+    sample_hpo_data = (
+        "C0000735\tHP:0001643\tShort QT interval\tShort QT interval\tHPO\tFinding\n"
+        "C0001175\tHP:0000001\tAIDS\tAcquired immunodeficiency syndrome\tMSH\tDisease\n"
+        "C0001290\tHP:0011849\tAbnormal bleeding\tBleeding\tHPO\tFinding\n"
+    )
+
+    # Helper to create gzipped test files
+    def create_gzipped_file(data: str, filename: str) -> Path:
+        file_path = tmp_path / filename
+        with gzip.open(file_path, "wt", encoding="utf-8") as f:
+            f.write(data)
+        return file_path
+
+    hpo_file = create_gzipped_file(sample_hpo_data, "hpo.txt.gz")
+
+    # 2. Act: Run the ETL process
+    with PostgresNativeLoader(db_dsn=postgres_db_dsn, autocommit=False) as loader:
+        loader.initialize_staging(
+            staging_table,
+            STAGING_MEDGEN_HPO_MAPPING_DDL.replace("staging_medgen_hpo_mapping", staging_table),
+        )
+
+        records_iterator = parse_hpo_mapping(hpo_file)
+        byte_iterator = stream_hpo_mapping_tsv(records_iterator)
+        loader.bulk_load(staging_table, byte_iterator)
+
+        loader.apply_changes(
+            mode="full",
+            staging_table=staging_table,
+            production_table=production_table,
+            production_ddl=PRODUCTION_MEDGEN_HPO_MAPPING_DDL,
+            index_ddls=PRODUCTION_MEDGEN_HPO_MAPPING_INDEXES_DDL,
+            pk_name="hpo_mapping_id",
+            business_key="sdui",
+        )
+
+        loader.cleanup(staging_table, production_table)
+
+    # 3. Assert: Verify the final state of the database
+    with psycopg.connect(postgres_db_dsn) as conn, conn.cursor() as cur:
+        cur.execute(f"SELECT COUNT(*) FROM {production_table}")
+        assert cur.fetchone()[0] == 3
+
+        cur.execute(f"SELECT cui, hpo_str, medgen_str, sty FROM {production_table} WHERE sdui = 'HP:0000001'")
+        record = cur.fetchone()
+        assert record[0] == "C0001175"
+        assert record[1] == "AIDS"
+        assert record[2] == "Acquired immunodeficiency syndrome"
+        assert record[3] == "Disease"
+
         def table_exists(cursor, table_name):
             cursor.execute(
                 "SELECT EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = %s)",

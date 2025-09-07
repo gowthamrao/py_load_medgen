@@ -56,6 +56,19 @@ class MedgenName:
     raw_record: str
 
 
+@dataclass(frozen=True)
+class MedgenHpoMapping:
+    """Represents a single record from the MedGen_HPO_Mapping.txt.gz file."""
+
+    cui: str
+    sdui: str
+    hpo_str: str
+    medgen_str: str
+    medgen_str_sab: str
+    sty: str
+    raw_record: str
+
+
 def stream_mrconso_tsv(records: Iterator[MrconsoRecord]) -> Iterator[bytes]:
     """
     Transforms an iterator of MrconsoRecord objects into a streaming iterator
@@ -71,6 +84,18 @@ def stream_mrconso_tsv(records: Iterator[MrconsoRecord]) -> Iterator[bytes]:
 def stream_names_tsv(records: Iterator[MedgenName]) -> Iterator[bytes]:
     """
     Transforms an iterator of MedgenName objects into a streaming iterator
+    of UTF-8 encoded TSV lines.
+    """
+    for record in records:
+        line = "\t".join(
+            str(getattr(record, field.name) or r"\N") for field in fields(record)
+        )
+        yield (line + "\n").encode("utf-8")
+
+
+def stream_hpo_mapping_tsv(records: Iterator[MedgenHpoMapping]) -> Iterator[bytes]:
+    """
+    Transforms an iterator of MedgenHpoMapping objects into a streaming iterator
     of UTF-8 encoded TSV lines.
     """
     for record in records:
@@ -165,6 +190,47 @@ def parse_names(file_path: Path) -> Iterator[MedgenName]:
                 name=row[1],
                 source=row[2],
                 suppress=row[3],
+                raw_record=raw_line,
+            )
+
+
+def parse_hpo_mapping(file_path: Path) -> Iterator[MedgenHpoMapping]:
+    """
+    Parses a gzipped, tab-delimited MedGen_HPO_Mapping.txt.gz file.
+    Args:
+        file_path: Path to the gzipped file.
+    Yields:
+        MedgenHpoMapping instances for each valid row in the file.
+    """
+    with gzip.open(file_path, "rt", encoding="utf-8") as f:
+        # The README implies a header, but doesn't show it. We'll check for it.
+        # It's safer to read the first line and check if it looks like a header.
+        first_line = f.readline()
+        if not first_line.lower().startswith("#cui") and not first_line.lower().startswith("cui"):
+            # If it doesn't look like a header, process it as a data line
+            f.seek(0)
+
+        for i, line in enumerate(f):
+            raw_line = line.strip()
+            if not raw_line:
+                continue
+
+            # This file is tab-delimited
+            row = raw_line.split("\t")
+            if len(row) != 6:
+                logging.warning(
+                    f"Skipping malformed row {i+1} in HPO Mapping file: "
+                    f"expected 6 columns, found {len(row)}"
+                )
+                continue
+
+            yield MedgenHpoMapping(
+                cui=row[0],
+                sdui=row[1],
+                hpo_str=row[2],
+                medgen_str=row[3],
+                medgen_str_sab=row[4],
+                sty=row[5],
                 raw_record=raw_line,
             )
 
