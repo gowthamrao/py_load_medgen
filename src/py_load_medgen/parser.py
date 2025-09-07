@@ -54,32 +54,28 @@ class MedgenName:
     suppress: str
 
 
-def records_to_tsv(records: Iterator[MrconsoRecord]) -> io.StringIO:
-    """Converts an iterator of MrconsoRecord objects to a TSV in-memory file."""
-    buffer = io.StringIO()
-    # Note: The order of fields in the dataclass must match the table schema.
+def stream_mrconso_tsv(records: Iterator[MrconsoRecord]) -> Iterator[bytes]:
+    """
+    Transforms an iterator of MrconsoRecord objects into a streaming iterator
+    of UTF-8 encoded TSV lines.
+    """
     for record in records:
         line = "\t".join(
-            # Convert None to the string \N for PostgreSQL's COPY command
-            str(getattr(record, field.name) or r"\N")
-            for field in fields(record)
+            str(getattr(record, field.name) or r"\N") for field in fields(record)
         )
-        buffer.write(line + "\n")
-    buffer.seek(0)
-    return buffer
+        yield (line + "\n").encode("utf-8")
 
 
-def names_records_to_tsv(records: Iterator[MedgenName]) -> io.StringIO:
-    """Converts an iterator of MedgenName objects to a TSV in-memory file."""
-    buffer = io.StringIO()
+def stream_names_tsv(records: Iterator[MedgenName]) -> Iterator[bytes]:
+    """
+    Transforms an iterator of MedgenName objects into a streaming iterator
+    of UTF-8 encoded TSV lines.
+    """
     for record in records:
         line = "\t".join(
-            str(getattr(record, field.name) or r"\N")
-            for field in fields(record)
+            str(getattr(record, field.name) or r"\N") for field in fields(record)
         )
-        buffer.write(line + "\n")
-    buffer.seek(0)
-    return buffer
+        yield (line + "\n").encode("utf-8")
 
 
 def parse_mrconso(file_stream: IO[str]) -> Iterator[MrconsoRecord]:
