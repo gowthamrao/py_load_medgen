@@ -16,11 +16,11 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
-dependencies = []
+dependencies = ["tenacity"]
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]"]
-test = ["pytest", "pytest-mock", "pytest-postgresql"]
+test = ["pytest", "pytest-mock", "pytest-postgresql", "psycopg[binary]"]
 
 [project.scripts]
 py-load-medgen = "py_load_medgen.cli:main"
