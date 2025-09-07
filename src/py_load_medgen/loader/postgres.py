@@ -204,28 +204,9 @@ class PostgresNativeLoader(AbstractNativeLoader):
             self._commit()
         logging.info(f"ETL run finished for Log ID: {log_id}. Status: {status}")
 
-    def _create_and_load_new_production_table(
-        self, cur: psycopg.Cursor, new_production_table: str, staging_table: str, index_ddls: List[str]
-    ) -> None:
-        """Creates and loads data into a new production table and builds indexes."""
-        logging.info(f"Creating new production table '{new_production_table}'...")
-
-        cur.execute(f"CREATE TABLE {new_production_table} (LIKE {staging_table} INCLUDING ALL);")
-
-        logging.info(f"Loading data from '{staging_table}' to '{new_production_table}'...")
-        cur.execute(f"INSERT INTO {new_production_table} SELECT * FROM {staging_table};")
-
-        cur.execute(f"ANALYZE {new_production_table};")
-
-        logging.info(f"Creating indexes on '{new_production_table}'...")
-        for index_ddl in index_ddls:
-            # Substitute the placeholder with the actual new table name
-            formatted_ddl = index_ddl.format(table_name=new_production_table)
-            cur.execute(formatted_ddl)
-
-        logging.info("New production table created and indexed successfully.")
-
-    def execute_cdc(self, staging_table: str, production_table: str, pk_name: str) -> dict[str, int]:
+    def execute_cdc(
+        self, staging_table: str, production_table: str, pk_name: str, business_key: str
+    ) -> dict[str, int]:
         """
         Executes Change Data Capture (CDC) logic using SQL.
         This method identifies inserts, updates, and deletes by comparing the
@@ -235,28 +216,29 @@ class PostgresNativeLoader(AbstractNativeLoader):
             staging_table: The name of the staging table.
             production_table: The name of the production table.
             pk_name: The name of the primary key column of the production table.
+            business_key: The column name of the business key used for comparison.
         Returns:
             A dictionary with counts of records to be inserted and deleted.
         """
         if not self.conn:
             raise ConnectionError("Database connection not established.")
 
-        logging.info(f"Executing CDC for {production_table}...")
+        logging.info(f"Executing CDC for {production_table} using key '{business_key}'...")
         with self.conn.cursor() as cur:
             # Create temporary tables to store the IDs of records to be changed
             cur.execute("CREATE TEMP TABLE cdc_deletes (id BIGINT) ON COMMIT DROP;")
-            cur.execute("CREATE TEMP TABLE cdc_inserts (LIKE staging_medgen_names INCLUDING DEFAULTS) ON COMMIT DROP;")
+            # Create a generic temp table for inserts based on the staging table's structure
+            cur.execute(f"CREATE TEMP TABLE cdc_inserts (LIKE {staging_table} INCLUDING DEFAULTS) ON COMMIT DROP;")
 
             # --- Identify Deletes ---
             # Find records in production that are NOT in the new staging data.
             # These will be marked as inactive (soft-deleted).
-            # This logic assumes 'name' is the business key for a record.
             sql_find_deletes = f"""
                 INSERT INTO cdc_deletes (id)
                 SELECT p.{pk_name}
                 FROM {production_table} p
-                LEFT JOIN {staging_table} s ON p.name = s.name
-                WHERE s.cui IS NULL AND p.is_active = true;
+                LEFT JOIN {staging_table} s ON p.{business_key} = s.{business_key}
+                WHERE s.{business_key} IS NULL AND p.is_active = true;
             """
             cur.execute(sql_find_deletes)
             delete_count = cur.rowcount
@@ -267,7 +249,7 @@ class PostgresNativeLoader(AbstractNativeLoader):
                 INSERT INTO cdc_inserts
                 SELECT s.*
                 FROM {staging_table} s
-                LEFT JOIN {production_table} p ON s.name = p.name AND p.is_active = true
+                LEFT JOIN {production_table} p ON s.{business_key} = p.{business_key} AND p.is_active = true
                 WHERE p.{pk_name} IS NULL;
             """
             cur.execute(sql_find_inserts)
@@ -284,6 +266,7 @@ class PostgresNativeLoader(AbstractNativeLoader):
         production_ddl: str,
         index_ddls: list[str],
         pk_name: str,
+        business_key: str,
     ) -> None:
         """
         Applies changes to the production table based on the load mode.
@@ -293,7 +276,7 @@ class PostgresNativeLoader(AbstractNativeLoader):
         if mode == "full":
             self._apply_full_load(staging_table, production_table, production_ddl, index_ddls)
         elif mode == "delta":
-            self._apply_delta_load(staging_table, production_table, pk_name)
+            self._apply_delta_load(production_table, pk_name)
         else:
             raise ValueError(f"Unknown load mode: {mode}")
 
@@ -338,13 +321,20 @@ class PostgresNativeLoader(AbstractNativeLoader):
 
         logging.info(f"Atomic swap complete for {production_table}. Production data is updated.")
 
-    def _apply_delta_load(self, staging_table: str, production_table: str, pk_name: str) -> None:
+    def _apply_delta_load(self, production_table: str, pk_name: str) -> None:
         """Applies inserts and soft deletes for a delta load."""
         if not self.conn:
             raise ConnectionError("Database connection not established.")
 
         logging.info(f"Applying DELTA load for table {production_table}...")
         with self.conn.cursor() as cur:
+            # Dynamically get the column list from the temp table for the insert
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'cdc_inserts' ORDER BY ordinal_position;"
+            )
+            columns = [row[0] for row in cur.fetchall()]
+            column_list_str = ", ".join(columns)
+
             with self.conn.transaction():
                 # Apply soft deletes
                 sql_delete = f"""
@@ -357,8 +347,8 @@ class PostgresNativeLoader(AbstractNativeLoader):
 
                 # Apply inserts
                 sql_insert = f"""
-                    INSERT INTO {production_table} (cui, name, source, suppress, raw_record)
-                    SELECT cui, name, source, suppress, raw_record FROM cdc_inserts;
+                    INSERT INTO {production_table} ({column_list_str})
+                    SELECT {column_list_str} FROM cdc_inserts;
                 """
                 cur.execute(sql_insert)
                 logging.info(f"Applied {cur.rowcount} inserts.")

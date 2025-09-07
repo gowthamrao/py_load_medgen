@@ -50,6 +50,7 @@ ETL_CONFIG = [
         "prod_table": "medgen_concepts",
         "prod_ddl": PRODUCTION_CONCEPTS_DDL,
         "prod_pk": "concept_id",
+        "business_key": "aui",
         "index_ddls": PRODUCTION_CONCEPTS_INDEXES_DDL,
     },
     {
@@ -61,6 +62,7 @@ ETL_CONFIG = [
         "prod_table": "medgen_semantic_types",
         "prod_ddl": PRODUCTION_SEMANTIC_TYPES_DDL,
         "prod_pk": "semantic_type_id",
+        "business_key": "atui",
         "index_ddls": PRODUCTION_SEMANTIC_TYPES_INDEXES_DDL,
     },
     {
@@ -72,6 +74,7 @@ ETL_CONFIG = [
         "prod_table": "medgen_names",
         "prod_ddl": PRODUCTION_NAMES_DDL,
         "prod_pk": "name_id",
+        "business_key": "name",
         "index_ddls": PRODUCTION_NAMES_INDEXES_DDL,
     },
 ]
@@ -237,14 +240,16 @@ def main():
                         staging_table=config["staging_table"],
                         production_table=config["prod_table"],
                         pk_name=config["prod_pk"],
+                        business_key=config["business_key"],
                     )
                     loader.apply_changes(
                         mode="delta",
                         staging_table=config["staging_table"],
                         production_table=config["prod_table"],
-                        production_ddl=config["prod_ddl"],  # Not used in delta, but required by signature
-                        index_ddls=config["index_ddls"],    # Not used in delta
+                        production_ddl=config["prod_ddl"],
+                        index_ddls=config["index_ddls"],
                         pk_name=config["prod_pk"],
+                        business_key=config["business_key"],
                     )
 
                 loader.cleanup(config["staging_table"], config["prod_table"])
