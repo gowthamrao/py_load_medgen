@@ -1,5 +1,6 @@
 import ftplib
 import logging
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -73,6 +74,35 @@ class Downloader:
         except ftplib.all_errors as e:
             logging.warning(f"Could not find or parse checksum file '{checksum_filename}': {e}")
             return {} # Return empty dict if checksums aren't available
+
+    def get_release_version(self, readme_filename: str = "README") -> str:
+        """
+        Downloads the README file and parses it to find the release date/version.
+        Args:
+            readme_filename: The name of the README file on the FTP server.
+        Returns:
+            The release version string (e.g., a date) or "Unknown" if not found.
+        """
+        if not self.ftp:
+            raise ConnectionError("FTP connection not established.")
+
+        logging.info(f"Attempting to find release version from '{readme_filename}'...")
+        lines: list[str] = []
+        try:
+            self.ftp.retrlines(f"RETR {readme_filename}", lines.append)
+            for line in lines:
+                # Common patterns for release dates in README files
+                match = re.search(r"(?:Last update|Release Date|Version):\s*(.*)", line, re.IGNORECASE)
+                if match:
+                    version = match.group(1).strip()
+                    logging.info(f"Found release version: {version}")
+                    return version
+
+            logging.warning("Release version not found in README. Returning 'Unknown'.")
+            return "Unknown"
+        except ftplib.all_errors as e:
+            logging.warning(f"Could not download or parse '{readme_filename}': {e}")
+            return "Unknown"
 
     @staticmethod
     def _calculate_md5(filepath: Path) -> str:

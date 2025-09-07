@@ -47,8 +47,8 @@ class PostgresNativeLoader(AbstractNativeLoader):
         self.autocommit = autocommit
 
     def _commit(self) -> None:
-        """Commits the transaction if autocommit is enabled."""
-        if self.autocommit and self.conn:
+        """Commits the transaction if a connection exists."""
+        if self.conn and not self.conn.closed:
             self.conn.commit()
 
     def connect(self) -> None:
@@ -109,6 +109,7 @@ class PostgresNativeLoader(AbstractNativeLoader):
             with self.conn.transaction():
                 cur.execute(ddl)
                 cur.execute(f"TRUNCATE TABLE {table_name};")
+        self._commit()
         logging.info(f"Staging table {table_name} initialized successfully.")
 
     def bulk_load(self, table_name: str, data_iterator: Iterator[bytes]) -> None:
@@ -126,6 +127,7 @@ class PostgresNativeLoader(AbstractNativeLoader):
             with cur.copy(f"COPY {table_name} FROM STDIN WITH (FORMAT TEXT, NULL '\\N')") as copy:
                 for line in data_iterator:
                     copy.write(line)
+        self._commit()
         logging.info(f"Bulk load into '{table_name}' complete.")
 
     def _initialize_metadata(self) -> None:
@@ -309,8 +311,20 @@ class PostgresNativeLoader(AbstractNativeLoader):
         with self.conn.cursor() as cur:
             # Create the new production table using the explicit DDL
             cur.execute(production_ddl.format(table_name=new_production_table))
+
+            # Dynamically build the column list from the staging table to make the INSERT generic
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = %s ORDER BY ordinal_position;",
+                (staging_table,),
+            )
+            columns = [row[0] for row in cur.fetchall()]
+            column_list_str = ", ".join(columns)
+
             # Load data from staging
-            cur.execute(f"INSERT INTO {new_production_table} (cui, name, source, suppress, raw_record) SELECT cui, name, source, suppress, raw_record FROM {staging_table};")
+            logging.info(f"Loading data from '{staging_table}' into '{new_production_table}'")
+            insert_sql = f"INSERT INTO {new_production_table} ({column_list_str}) SELECT {column_list_str} FROM {staging_table};"
+            cur.execute(insert_sql)
+
             # Create indexes
             for index_ddl in index_ddls:
                 cur.execute(index_ddl.format(table_name=new_production_table))

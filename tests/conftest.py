@@ -8,4 +8,6 @@ def postgres_db_dsn():
     and yields the database connection DSN.
     """
     with PostgresContainer("postgres:13-alpine") as postgres:
-        yield postgres.get_connection_url()
+        dsn = postgres.get_connection_url()
+        # psycopg3 doesn't like the 'psycopg2' driver specifier
+        yield dsn.replace("postgresql+psycopg2://", "postgresql://")

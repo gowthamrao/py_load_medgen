@@ -1,4 +1,7 @@
+import gzip
 import io
+from pathlib import Path
+
 import psycopg
 import pytest
 from py_load_medgen.loader.postgres import PostgresNativeLoader
@@ -50,10 +53,22 @@ def setup_teardown_tables(postgres_db_dsn):
 
 
 @pytest.mark.integration
-def test_delta_load_scenario(postgres_db_dsn):
+def test_delta_load_scenario(postgres_db_dsn, tmp_path: Path):
     """
     Tests the entire delta load workflow using testcontainers.
     """
+    # Helper to create gzipped test files
+    def create_gzipped_file(data: str, filename: str) -> Path:
+        file_path = tmp_path / filename
+        with gzip.open(file_path, "wt", encoding="utf-8") as f:
+            # Add a header to be skipped by the parser
+            f.write("#CUI|name|source|SUPPRESS|\n")
+            f.write(data)
+        return file_path
+
+    v1_file = create_gzipped_file(V1_DATA, "v1.gz")
+    v2_file = create_gzipped_file(V2_DATA, "v2.gz")
+
     with PostgresNativeLoader(db_dsn=postgres_db_dsn, autocommit=False) as loader:
         # --- Phase 1: Initial Full Load ---
         # A. Initialize Staging and Production tables
@@ -64,7 +79,7 @@ def test_delta_load_scenario(postgres_db_dsn):
                 conn.commit()
 
         # B. Load V1 data and apply as a full load
-        v1_records = parse_names(io.StringIO(V1_DATA))
+        v1_records = parse_names(v1_file)
         v1_bytes = stream_names_tsv(v1_records)
         loader.bulk_load(STAGING_TABLE, v1_bytes)
         loader.apply_changes(
@@ -85,7 +100,7 @@ def test_delta_load_scenario(postgres_db_dsn):
         # --- Phase 2: Delta Load ---
         # A. Load V2 data into staging
         loader.initialize_staging(STAGING_TABLE, STAGING_NAMES_DDL.replace("staging_medgen_names", STAGING_TABLE))
-        v2_records = parse_names(io.StringIO(V2_DATA))
+        v2_records = parse_names(v2_file)
         v2_bytes = stream_names_tsv(v2_records)
         loader.bulk_load(STAGING_TABLE, v2_bytes)
 
