@@ -167,6 +167,12 @@ def main():
         default="full",
         help="The ETL load strategy to perform. 'full' performs a complete refresh. 'delta' applies changes since the last load.",
     )
+    parser.add_argument(
+        "--max-parse-errors",
+        type=int,
+        default=100,
+        help="The maximum number of parsing errors to tolerate before aborting the ETL process.",
+    )
 
     args = parser.parse_args()
 
@@ -254,11 +260,14 @@ def main():
                 record_counter = Counter()
                 f = None
                 try:
+                    parser_func = config["parser"]
                     if config["file"].endswith(".gz"):
-                        records_iterator = config["parser"](local_path)
+                        # For gzipped files, the parser function takes the path
+                        records_iterator = parser_func(local_path, max_errors=args.max_parse_errors)
                     else:
+                        # For plain text files, the parser takes a file stream
                         f = open(local_path, "r", encoding="utf-8")
-                        records_iterator = config["parser"](f)
+                        records_iterator = parser_func(f, max_errors=args.max_parse_errors)
 
                     counted_records = count_iterator(records_iterator, record_counter)
                     byte_iterator = config["transformer"](counted_records)

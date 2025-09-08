@@ -31,8 +31,8 @@ def test_parse_names_and_raw_record(tmp_path: Path):
     with gzip.open(file_path, "wt", encoding="utf-8") as f:
         f.write("\n".join(content_lines))
 
-    # 2. Act: Parse the file
-    records = list(parse_names(file_path))
+    # 2. Act: Parse the file, allowing for some errors
+    records = list(parse_names(file_path, max_errors=10))
 
     # 3. Assert
     assert len(records) == 5
@@ -68,7 +68,7 @@ def test_parse_mrconso_and_raw_record():
     file_stream = io.StringIO("\n".join(content_lines))
 
     # 2. Act: Parse the file
-    records = list(parse_mrconso(file_stream))
+    records = list(parse_mrconso(file_stream, max_errors=10))
 
     # 3. Assert
     assert len(records) == 4
@@ -100,7 +100,7 @@ def test_parse_mrsty():
     file_stream = io.StringIO("\n".join(content_lines))
 
     # 2. Act
-    records = list(parse_mrsty(file_stream))
+    records = list(parse_mrsty(file_stream, max_errors=10))
 
     # 3. Assert
     assert len(records) == 5
