@@ -8,6 +8,8 @@ import psycopg
 from py_load_medgen.loader.base import AbstractNativeLoader
 from py_load_medgen.sql.ddl import (
     ETL_AUDIT_LOG_DDL,
+    ETL_RUN_DETAILS_DDL,
+    ETL_RUN_DETAILS_INDEX_DDL,
 )
 
 # Configure logging
@@ -108,14 +110,16 @@ class PostgresNativeLoader(AbstractNativeLoader):
         logging.info(f"Bulk load into '{table_name}' complete.")
 
     def _initialize_metadata(self) -> None:
-        """Ensures the ETL audit log table exists."""
+        """Ensures the ETL audit log tables exist."""
         if not self.conn:
             raise ConnectionError("Database connection not established.")
-        logging.info("Initializing metadata table: etl_audit_log")
+        logging.info("Initializing metadata tables: etl_audit_log, etl_run_details")
         with self.conn.cursor() as cur:
             cur.execute(ETL_AUDIT_LOG_DDL)
+            cur.execute(ETL_RUN_DETAILS_DDL)
+            cur.execute(ETL_RUN_DETAILS_INDEX_DDL)
         self._commit()
-        logging.info("Metadata table initialized.")
+        logging.info("Metadata tables initialized.")
 
     def log_run_start(
         self, run_id: uuid.UUID, package_version: str, load_mode: str, source_files: dict
@@ -151,6 +155,34 @@ class PostgresNativeLoader(AbstractNativeLoader):
             self._commit()
         logging.info(f"ETL run finished for Log ID: {log_id}. Status: {status}")
 
+    def log_run_detail(self, log_id: int, metrics: dict) -> None:
+        """Logs the detailed, per-table metrics of an ETL run."""
+        if not self.conn:
+            raise ConnectionError("Database connection not established.")
+
+        sql = """
+            INSERT INTO etl_run_details (
+                log_id, table_name, records_extracted, records_inserted,
+                records_deleted, records_updated
+            ) VALUES (%s, %s, %s, %s, %s, %s);
+        """
+
+        with self.conn.cursor() as cur:
+            cur.execute(
+                sql,
+                (
+                    log_id,
+                    metrics.get("table_name"),
+                    metrics.get("records_extracted", 0),
+                    metrics.get("records_inserted", 0),
+                    metrics.get("records_deleted", 0),
+                    metrics.get("records_updated", 0),
+                ),
+            )
+            self._commit()
+
+        logging.info(f"Logged details for table: {metrics.get('table_name')}")
+
     def execute_cdc(
         self, staging_table: str, production_table: str, pk_name: str, business_key: str
     ) -> dict[str, int]:
@@ -159,14 +191,36 @@ class PostgresNativeLoader(AbstractNativeLoader):
             raise ConnectionError("Database connection not established.")
         logging.info(f"Executing CDC for {production_table} using key '{business_key}'...")
         with self.conn.cursor() as cur:
+            # Ensure temp tables exist and are empty for this run.
             cur.execute("CREATE TEMP TABLE IF NOT EXISTS cdc_deletes (id BIGINT) ON COMMIT PRESERVE ROWS;")
             cur.execute(f"CREATE TEMP TABLE IF NOT EXISTS cdc_inserts (LIKE {staging_table} INCLUDING DEFAULTS) ON COMMIT PRESERVE ROWS;")
-            sql_find_deletes = f"INSERT INTO cdc_deletes (id) SELECT p.{pk_name} FROM {production_table} p LEFT JOIN {staging_table} s ON p.{business_key} = s.{business_key} WHERE s.{business_key} IS NULL AND p.is_active = true;"
-            cur.execute(sql_find_deletes)
-            delete_count = cur.rowcount
-            sql_find_inserts = f"INSERT INTO cdc_inserts SELECT s.* FROM {staging_table} s LEFT JOIN {production_table} p ON s.{business_key} = p.{business_key} AND p.is_active = true WHERE p.{pk_name} IS NULL;"
-            cur.execute(sql_find_inserts)
-            insert_count = cur.rowcount
+            cur.execute("TRUNCATE TABLE cdc_deletes, cdc_inserts;")
+
+            cur.execute("SELECT to_regclass(%s)", (production_table,))
+            table_exists = cur.fetchone()[0]
+
+            delete_count = 0
+            if table_exists:
+                # Construct the JOIN condition for one or more business keys
+                keys = [key.strip() for key in business_key.split(',')]
+                join_condition = " AND ".join([f"p.{key} = s.{key}" for key in keys])
+                where_condition = " AND ".join([f"s.{key} IS NULL" for key in keys])
+
+                sql_find_deletes = f"INSERT INTO cdc_deletes (id) SELECT p.{pk_name} FROM {production_table} p LEFT JOIN {staging_table} s ON {join_condition} WHERE {where_condition} AND p.is_active = true;"
+                cur.execute(sql_find_deletes)
+                delete_count = cur.rowcount
+
+                # For inserts, the join condition is the same, but the where clause checks for null on the production side's PK
+                sql_find_inserts = f"INSERT INTO cdc_inserts SELECT s.* FROM {staging_table} s LEFT JOIN {production_table} p ON {join_condition} AND p.is_active = true WHERE p.{pk_name} IS NULL;"
+                cur.execute(sql_find_inserts)
+                insert_count = cur.rowcount
+            else:
+                # If production table doesn't exist, all staging records are inserts
+                logging.info(f"Production table {production_table} does not exist. Treating all records as inserts.")
+                sql_find_inserts = f"INSERT INTO cdc_inserts SELECT s.* FROM {staging_table} s;"
+                cur.execute(sql_find_inserts)
+                insert_count = cur.rowcount
+
         logging.info(f"CDC complete. Inserts: {insert_count}, Deletes: {delete_count}")
         return {"inserts": insert_count, "deletes": delete_count}
 
@@ -194,18 +248,21 @@ class PostgresNativeLoader(AbstractNativeLoader):
         production_ddl: str,
         index_ddls: list[str],
         pk_name: str,
-        business_key: str,
+        business_key: Optional[str] = None,
+        full_load_select_sql: Optional[str] = None,
     ) -> None:
         """Applies changes to the production table based on the load mode."""
         if mode == "full":
-            self._apply_full_load(staging_table, production_table, production_ddl)
+            self._apply_full_load(staging_table, production_table, production_ddl, full_load_select_sql)
         elif mode == "delta":
+            if not business_key:
+                raise ValueError("A 'business_key' is required for delta loads.")
             self._apply_delta_load(production_table, pk_name, production_ddl, index_ddls)
         else:
             raise ValueError(f"Unknown load mode: {mode}")
 
     def _apply_full_load(
-        self, staging_table: str, production_table: str, production_ddl: str
+        self, staging_table: str, production_table: str, production_ddl: str, full_load_select_sql: Optional[str] = None
     ) -> None:
         """Applies changes atomically using the 'atomic swap' method for a full load."""
         if not self.conn:
@@ -216,11 +273,23 @@ class PostgresNativeLoader(AbstractNativeLoader):
         logging.info(f"Applying FULL load for table {production_table} with atomic swap...")
         with self.conn.cursor() as cur:
             cur.execute(production_ddl.format(table_name=new_production_table))
-            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = %s ORDER BY ordinal_position;", (staging_table,))
-            columns = [row[0] for row in cur.fetchall()]
-            column_list_str = ", ".join(columns)
-            logging.info(f"Loading data from '{staging_table}' into '{new_production_table}'")
-            cur.execute(f"INSERT INTO {new_production_table} ({column_list_str}) SELECT {column_list_str} FROM {staging_table};")
+
+            if full_load_select_sql:
+                # Use custom SQL for loading data from staging to production
+                insert_sql = full_load_select_sql.format(
+                    new_production_table=new_production_table,
+                    staging_table=staging_table
+                )
+                logging.info(f"Loading data into '{new_production_table}' using custom SQL...")
+                cur.execute(insert_sql)
+            else:
+                # Use generic SELECT * for tables with matching schemas
+                cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = %s ORDER BY ordinal_position;", (staging_table,))
+                columns = [row[0] for row in cur.fetchall()]
+                column_list_str = ", ".join(columns)
+                logging.info(f"Loading data from '{staging_table}' into '{new_production_table}'")
+                cur.execute(f"INSERT INTO {new_production_table} ({column_list_str}) SELECT {column_list_str} FROM {staging_table};")
+
             logging.info(f"Replicating {len(index_ddls)} indexes on new table {new_production_table}...")
             for index_ddl in index_ddls:
                 prefix, sep, suffix = index_ddl.rpartition(f" ON {production_table}")
