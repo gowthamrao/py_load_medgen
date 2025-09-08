@@ -1,13 +1,13 @@
 import ftplib
 from pathlib import Path
-from unittest.mock import MagicMock, ANY
+from unittest.mock import ANY, MagicMock
 
 import pytest
 
 from py_load_medgen.downloader import Downloader
 
 
-def test_downloader_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_downloader_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Tests the basic flow of the Downloader context manager and file download
     by mocking all interactions with the `ftplib`.
@@ -49,7 +49,7 @@ def test_downloader_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     assert local_filepath.read_text() == "dummy-data"
 
 
-def test_downloader_checksum_verification(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_downloader_checksum_verification(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Tests that the downloader correctly verifies file integrity using checksums.
     """
@@ -112,7 +112,7 @@ def test_downloader_checksum_verification(tmp_path: Path, monkeypatch: pytest.Mo
     assert not local_filepath_fail.exists()
 
 
-def test_get_release_version(monkeypatch: pytest.MonkeyPatch):
+def test_get_release_version(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Tests the parsing of the release version from a mocked README file.
     """
@@ -155,7 +155,7 @@ def test_get_release_version(monkeypatch: pytest.MonkeyPatch):
     assert version == "Unknown"
 
 
-def test_downloader_resume_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_downloader_resume_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Tests that the downloader correctly resumes a partially downloaded file.
     """

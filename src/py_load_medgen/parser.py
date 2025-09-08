@@ -24,14 +24,13 @@ class MrconsoRecord:
     sab: str
     tty: str
     code: str
-    str: str
+    record_str: str
     srl: str
     suppress: str
     cvf: Optional[str]
     raw_record: str
 
 
-import csv
 import logging
 from pathlib import Path
 from typing import IO, Iterator
@@ -41,7 +40,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 
 import gzip
-import io
 from dataclasses import fields
 
 
@@ -148,7 +146,7 @@ def parse_mrconso(file_stream: IO[str]) -> Iterator[MrconsoRecord]:
                 sab=row[11],
                 tty=row[12],
                 code=row[13],
-                str=row[14],
+                record_str=row[14],
                 srl=row[15],
                 suppress=row[16],
                 cvf=row[17] if row[17] else None,

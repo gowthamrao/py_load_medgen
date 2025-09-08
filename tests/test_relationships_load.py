@@ -1,4 +1,5 @@
 import io
+
 import psycopg
 import pytest
 
@@ -8,9 +9,9 @@ from py_load_medgen.parser import (
     stream_mrrel_tsv,
 )
 from py_load_medgen.sql.ddl import (
-    STAGING_MEDGEN_RELATIONSHIPS_DDL,
     PRODUCTION_MEDGEN_RELATIONSHIPS_DDL,
     PRODUCTION_MEDGEN_RELATIONSHIPS_INDEXES_DDL,
+    STAGING_MEDGEN_RELATIONSHIPS_DDL,
 )
 
 # Sample MRREL.RRF data for testing.
@@ -32,14 +33,14 @@ def setup_teardown_tables(postgres_db_dsn):
             cur.execute(f"DROP TABLE IF EXISTS {STAGING_TABLE} CASCADE;")
             cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE} CASCADE;")
             cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE}_old CASCADE;")
-            cur.execute(f"DROP TABLE IF EXISTS etl_audit_log CASCADE;")
+            cur.execute("DROP TABLE IF EXISTS etl_audit_log CASCADE;")
     yield
     with psycopg.connect(postgres_db_dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(f"DROP TABLE IF EXISTS {STAGING_TABLE} CASCADE;")
             cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE} CASCADE;")
             cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE}_old CASCADE;")
-            cur.execute(f"DROP TABLE IF EXISTS etl_audit_log CASCADE;")
+            cur.execute("DROP TABLE IF EXISTS etl_audit_log CASCADE;")
 
 
 @pytest.mark.integration

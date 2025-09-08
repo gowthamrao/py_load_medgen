@@ -1,7 +1,7 @@
-import uuid
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock
 
 import pytest
+
 from py_load_medgen.loader.postgres import PostgresNativeLoader
 
 # A sample DDL for a production table for testing purposes
@@ -48,14 +48,10 @@ def test_apply_full_load_replicates_indexes(mocker):
     )
 
     # 3. Assert
+    # This SQL must exactly match the string in the implementation.
+    discovery_sql = "SELECT indexdef FROM pg_indexes i JOIN pg_class c ON i.indexname = c.relname LEFT JOIN pg_constraint con ON c.oid = con.conindid WHERE i.tablename = %s AND con.contype IS DISTINCT FROM 'p';"
+
     # Verify that the index discovery query was made on the original production table
-    index_discovery_call = call("SELECT indexdef\n            FROM pg_indexes i\n            JOIN pg_class c ON i.indexname = c.relname\n            LEFT JOIN pg_constraint con ON c.oid = con.conindid\n            WHERE i.tablename = %s AND con.contype IS DISTINCT FROM 'p';", ("prod_table",))
-
-    # Verify that the discovered index was replicated on the NEW production table
-    replicated_index_call = call("CREATE INDEX prod_table_name_idx ON prod_table_new USING btree (name);")
-
-    # Check that the index discovery query was made on the original production table
-    discovery_sql = "\n            SELECT indexdef\n            FROM pg_indexes i\n            JOIN pg_class c ON i.indexname = c.relname\n            LEFT JOIN pg_constraint con ON c.oid = con.conindid\n            WHERE i.tablename = %s AND con.contype IS DISTINCT FROM 'p';\n        "
     execute_spy.assert_any_call(discovery_sql, ("prod_table",))
 
     # Verify that the discovered index was replicated on the NEW production table,

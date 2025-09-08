@@ -1,10 +1,11 @@
 import pytest
+
 from py_load_medgen.loader.factory import LoaderFactory
 from py_load_medgen.loader.postgres import PostgresNativeLoader
 
 
 @pytest.mark.unit
-def test_loader_factory_returns_postgres_loader():
+def test_loader_factory_returns_postgres_loader() -> None:
     """
     Tests that the LoaderFactory correctly returns a PostgresNativeLoader
     for a valid PostgreSQL DSN.
@@ -16,7 +17,7 @@ def test_loader_factory_returns_postgres_loader():
 
 
 @pytest.mark.unit
-def test_loader_factory_raises_error_for_unsupported_scheme():
+def test_loader_factory_raises_error_for_unsupported_scheme() -> None:
     """
     Tests that the LoaderFactory raises a ValueError for an unsupported DSN scheme.
     """
@@ -26,7 +27,7 @@ def test_loader_factory_raises_error_for_unsupported_scheme():
 
 
 @pytest.mark.unit
-def test_loader_factory_raises_error_for_malformed_dsn():
+def test_loader_factory_raises_error_for_malformed_dsn() -> None:
     """
     Tests that the LoaderFactory raises a ValueError for a malformed DSN.
     """

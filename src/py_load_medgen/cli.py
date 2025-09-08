@@ -2,42 +2,42 @@ import argparse
 import logging
 import os
 import sys
-import uuid
 import traceback
-from pathlib import Path
+import uuid
 from importlib import metadata
-from typing import Iterator, TypeVar
+from pathlib import Path
+from typing import Iterator, TypeVar, TypedDict, Callable, Any
 
 from py_load_medgen.downloader import Downloader
 from py_load_medgen.loader.factory import LoaderFactory
+from py_load_medgen.parser import (
+    parse_hpo_mapping,
+    parse_mrconso,
+    parse_mrrel,
+    parse_mrsty,
+    parse_names,
+    stream_hpo_mapping_tsv,
+    stream_mrconso_tsv,
+    stream_mrrel_tsv,
+    stream_mrsty_tsv,
+    stream_names_tsv,
+)
 from py_load_medgen.sql.ddl import (
-    STAGING_CONCEPTS_DDL,
-    STAGING_NAMES_DDL,
-    STAGING_SEMANTIC_TYPES_DDL,
-    STAGING_MEDGEN_HPO_MAPPING_DDL,
     PRODUCTION_CONCEPTS_DDL,
-    PRODUCTION_NAMES_DDL,
-    PRODUCTION_SEMANTIC_TYPES_DDL,
-    PRODUCTION_MEDGEN_HPO_MAPPING_DDL,
     PRODUCTION_CONCEPTS_INDEXES_DDL,
-    PRODUCTION_NAMES_INDEXES_DDL,
-    PRODUCTION_SEMANTIC_TYPES_INDEXES_DDL,
+    PRODUCTION_MEDGEN_HPO_MAPPING_DDL,
     PRODUCTION_MEDGEN_HPO_MAPPING_INDEXES_DDL,
-    STAGING_MEDGEN_RELATIONSHIPS_DDL,
     PRODUCTION_MEDGEN_RELATIONSHIPS_DDL,
     PRODUCTION_MEDGEN_RELATIONSHIPS_INDEXES_DDL,
-)
-from py_load_medgen.parser import (
-    parse_mrconso,
-    stream_mrconso_tsv,
-    parse_names,
-    stream_names_tsv,
-    parse_mrsty,
-    stream_mrsty_tsv,
-    parse_hpo_mapping,
-    stream_hpo_mapping_tsv,
-    parse_mrrel,
-    stream_mrrel_tsv,
+    PRODUCTION_NAMES_DDL,
+    PRODUCTION_NAMES_INDEXES_DDL,
+    PRODUCTION_SEMANTIC_TYPES_DDL,
+    PRODUCTION_SEMANTIC_TYPES_INDEXES_DDL,
+    STAGING_CONCEPTS_DDL,
+    STAGING_MEDGEN_HPO_MAPPING_DDL,
+    STAGING_MEDGEN_RELATIONSHIPS_DDL,
+    STAGING_NAMES_DDL,
+    STAGING_SEMANTIC_TYPES_DDL,
 )
 
 # Configure logging
@@ -49,8 +49,22 @@ logging.basicConfig(
 NCBI_FTP_HOST = "ftp.ncbi.nlm.nih.gov"
 NCBI_FTP_PATH = "/pub/medgen/"
 
-# File and Table Mappings
-ETL_CONFIG = [
+# --- Type Definitions for ETL Configuration ---
+class EtlFileConfig(TypedDict):
+    file: str
+    parser: Callable[[Any], Iterator[Any]]
+    transformer: Callable[[Iterator[Any]], Iterator[bytes]]
+    staging_table: str
+    staging_ddl: str
+    prod_table: str
+    prod_ddl: str
+    prod_pk: str
+    business_key: str
+    index_ddls: list[str]
+
+
+# --- File and Table Mappings ---
+ETL_CONFIG: list[EtlFileConfig] = [
     {
         "file": "MRCONSO.RRF",
         "parser": parse_mrconso,
