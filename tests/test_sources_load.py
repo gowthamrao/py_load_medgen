@@ -49,27 +49,24 @@ def test_full_load_of_sources(postgres_db_dsn: str, tmp_path: Path):
             mode="full",
             staging_table=STAGING_TABLE,
             production_table=PRODUCTION_TABLE,
-            production_ddl=PRODUCTION_MEDGEN_SOURCES_DDL.format(table_name=PRODUCTION_TABLE),
-            index_ddls=[
-                ddl.format(table_name=PRODUCTION_TABLE)
-                for ddl in PRODUCTION_MEDGEN_SOURCES_INDEXES_DDL
-            ],
+            production_ddl=PRODUCTION_MEDGEN_SOURCES_DDL,
+            index_ddls=PRODUCTION_MEDGEN_SOURCES_INDEXES_DDL,
             pk_name="source_id",
+            full_load_select_sql="INSERT INTO {new_production_table} (cui, source_abbreviation, attribute_name, attribute_value, raw_record) SELECT cui, sab, atn, atv, raw_record FROM {staging_table};"
         )
 
         # 5. Verification
-        with psycopg.connect(postgres_db_dsn) as conn:
-            with conn.cursor() as cur:
-                cur.execute(f"SELECT COUNT(*) FROM {PRODUCTION_TABLE} WHERE is_active = true;")
-                count = cur.fetchone()[0]
-                assert count == 3
+        with loader.conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) FROM {PRODUCTION_TABLE} WHERE is_active = true;")
+            count = cur.fetchone()[0]
+            assert count == 3
 
-                cur.execute(
-                    f"SELECT cui, source_abbreviation, attribute_name, attribute_value FROM {PRODUCTION_TABLE} ORDER BY cui, attribute_name;"
-                )
-                results = cur.fetchall()
+            cur.execute(
+                f"SELECT cui, source_abbreviation, attribute_name, attribute_value FROM {PRODUCTION_TABLE} ORDER BY cui, attribute_name;"
+            )
+            results = cur.fetchall()
 
-                # Assertions for the loaded data
-                assert results[0] == ("C0000005", "HPO", "HPO_ID", "HP:0000505")
-                assert results[1] == ("C0000005", "OMIM", "OMIM_MIM_ID", "617943")
-                assert results[2] == ("C1234567", "OTHERSOURCE", "SOME_ID", "ABC-123")
+            # Assertions for the loaded data
+            assert results[0] == ("C0000005", "HPO", "HPO_ID", "HP:0000505")
+            assert results[1] == ("C0000005", "OMIM", "OMIM_MIM_ID", "617943")
+            assert results[2] == ("C1234567", "OTHERSOURCE", "SOME_ID", "ABC-123")

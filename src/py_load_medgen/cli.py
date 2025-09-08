@@ -6,7 +6,7 @@ import traceback
 import uuid
 from importlib import metadata
 from pathlib import Path
-from typing import Iterator, TypeVar, TypedDict, Callable, Any
+from typing import Iterator, TypeVar, TypedDict, Callable, Any, NotRequired
 
 from py_load_medgen.downloader import Downloader
 from py_load_medgen.loader.factory import LoaderFactory
@@ -66,6 +66,7 @@ class EtlFileConfig(TypedDict):
     prod_pk: str
     business_key: str
     index_ddls: list[str]
+    full_load_select_sql: NotRequired[str]
 
 
 # --- File and Table Mappings ---
@@ -117,6 +118,7 @@ ETL_CONFIG: list[EtlFileConfig] = [
         "prod_pk": "source_id",
         "business_key": "atui",
         "index_ddls": PRODUCTION_MEDGEN_SOURCES_INDEXES_DDL,
+        "full_load_select_sql": "INSERT INTO {new_production_table} (cui, source_abbreviation, attribute_name, attribute_value, raw_record) SELECT cui, sab, atn, atv, raw_record FROM {staging_table};"
     },
     {
         "file": "NAMES.RRF.gz",
@@ -299,7 +301,7 @@ def main():
                     if f:
                         f.close()
 
-                # C. Apply Changes based on mode
+                # C. Apply Changes based on mode and log details
                 if args.mode == "full":
                     loader.apply_changes(
                         mode="full",
@@ -308,14 +310,34 @@ def main():
                         production_ddl=config["prod_ddl"],
                         index_ddls=config["index_ddls"],
                         pk_name=config["prod_pk"],
+                        full_load_select_sql=config.get("full_load_select_sql"),
                     )
+                    # For full loads, extracted equals inserted
+                    metrics = {
+                        "table_name": config["prod_table"],
+                        "records_extracted": record_counter.value,
+                        "records_inserted": record_counter.value,
+                        "records_deleted": 0,
+                        "records_updated": 0,
+                    }
+                    loader.log_run_detail(log_id, metrics)
+
                 elif args.mode == "delta":
-                    loader.execute_cdc(
+                    cdc_metrics = loader.execute_cdc(
                         staging_table=config["staging_table"],
                         production_table=config["prod_table"],
                         pk_name=config["prod_pk"],
                         business_key=config["business_key"],
                     )
+                    # For delta loads, log CDC results
+                    metrics = {
+                        "table_name": config["prod_table"],
+                        "records_extracted": record_counter.value,
+                        "records_inserted": cdc_metrics.get("inserts", 0),
+                        "records_deleted": cdc_metrics.get("deletes", 0),
+                        "records_updated": 0,  # 'updates' not yet implemented in CDC
+                    }
+                    loader.log_run_detail(log_id, metrics)
                     loader.apply_changes(
                         mode="delta",
                         staging_table=config["staging_table"],

@@ -67,40 +67,35 @@ class MedgenHpoMapping:
     raw_record: str
 
 
+def _dataclass_to_tsv(record) -> bytes:
+    """Converts a dataclass instance to a UTF-8 encoded TSV line, sanitizing the raw_record field."""
+    values = []
+    for field in fields(record):
+        value = getattr(record, field.name)
+        if field.name == "raw_record" and isinstance(value, str):
+            # Replace tabs and newlines in raw_record to not break the TSV format
+            value = value.replace("\t", " ").replace("\n", " ")
+        values.append(str(value or r"\N"))
+    line = "\t".join(values)
+    return (line + "\n").encode("utf-8")
+
+
 def stream_mrconso_tsv(records: Iterator[MrconsoRecord]) -> Iterator[bytes]:
-    """
-    Transforms an iterator of MrconsoRecord objects into a streaming iterator
-    of UTF-8 encoded TSV lines.
-    """
+    """Transforms an iterator of MrconsoRecord objects into a streaming iterator of UTF-8 encoded TSV lines."""
     for record in records:
-        line = "\t".join(
-            str(getattr(record, field.name) or r"\N") for field in fields(record)
-        )
-        yield (line + "\n").encode("utf-8")
+        yield _dataclass_to_tsv(record)
 
 
 def stream_names_tsv(records: Iterator[MedgenName]) -> Iterator[bytes]:
-    """
-    Transforms an iterator of MedgenName objects into a streaming iterator
-    of UTF-8 encoded TSV lines.
-    """
+    """Transforms an iterator of MedgenName objects into a streaming iterator of UTF-8 encoded TSV lines."""
     for record in records:
-        line = "\t".join(
-            str(getattr(record, field.name) or r"\N") for field in fields(record)
-        )
-        yield (line + "\n").encode("utf-8")
+        yield _dataclass_to_tsv(record)
 
 
 def stream_hpo_mapping_tsv(records: Iterator[MedgenHpoMapping]) -> Iterator[bytes]:
-    """
-    Transforms an iterator of MedgenHpoMapping objects into a streaming iterator
-    of UTF-8 encoded TSV lines.
-    """
+    """Transforms an iterator of MedgenHpoMapping objects into a streaming iterator of UTF-8 encoded TSV lines."""
     for record in records:
-        line = "\t".join(
-            str(getattr(record, field.name) or r"\N") for field in fields(record)
-        )
-        yield (line + "\n").encode("utf-8")
+        yield _dataclass_to_tsv(record)
 
 
 def parse_mrconso(file_stream: IO[str], max_errors: int) -> Iterator[MrconsoRecord]:
@@ -272,15 +267,9 @@ class MrrelRecord:
 
 
 def stream_mrrel_tsv(records: Iterator[MrrelRecord]) -> Iterator[bytes]:
-    """
-    Transforms an iterator of MrrelRecord objects into a streaming iterator
-    of UTF-8 encoded TSV lines.
-    """
+    """Transforms an iterator of MrrelRecord objects into a streaming iterator of UTF-8 encoded TSV lines."""
     for record in records:
-        line = "\t".join(
-            str(getattr(record, field.name) or r"\N") for field in fields(record)
-        )
-        yield (line + "\n").encode("utf-8")
+        yield _dataclass_to_tsv(record)
 
 
 def parse_mrrel(file_stream: IO[str], max_errors: int) -> Iterator[MrrelRecord]:
@@ -355,15 +344,9 @@ class MrstyRecord:
 
 
 def stream_mrsty_tsv(records: Iterator[MrstyRecord]) -> Iterator[bytes]:
-    """
-    Transforms an iterator of MrstyRecord objects into a streaming iterator
-    of UTF-8 encoded TSV lines.
-    """
+    """Transforms an iterator of MrstyRecord objects into a streaming iterator of UTF-8 encoded TSV lines."""
     for record in records:
-        line = "\t".join(
-            str(getattr(record, field.name) or r"\N") for field in fields(record)
-        )
-        yield (line + "\n").encode("utf-8")
+        yield _dataclass_to_tsv(record)
 
 
 def parse_mrsty(file_stream: IO[str], max_errors: int) -> Iterator[MrstyRecord]:
@@ -435,15 +418,9 @@ class MrsatRecord:
 
 
 def stream_mrsat_tsv(records: Iterator[MrsatRecord]) -> Iterator[bytes]:
-    """
-    Transforms an iterator of MrsatRecord objects into a streaming iterator
-    of UTF-8 encoded TSV lines.
-    """
+    """Transforms an iterator of MrsatRecord objects into a streaming iterator of UTF-8 encoded TSV lines."""
     for record in records:
-        line = "\t".join(
-            str(getattr(record, field.name) or r"\N") for field in fields(record)
-        )
-        yield (line + "\n").encode("utf-8")
+        yield _dataclass_to_tsv(record)
 
 
 def parse_mrsat(file_stream: IO[str], max_errors: int) -> Iterator[MrsatRecord]:

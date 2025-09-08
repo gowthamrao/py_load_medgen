@@ -61,7 +61,7 @@ def test_full_load_relationships(postgres_db_dsn):
 
         # Parse and bulk load
         file_stream = io.StringIO(SAMPLE_MRREL_DATA)
-        records_iterator = parse_mrrel(file_stream)
+        records_iterator = parse_mrrel(file_stream, max_errors=10)
         byte_iterator = stream_mrrel_tsv(records_iterator)
         loader.bulk_load(STAGING_TABLE, byte_iterator)
 
@@ -78,6 +78,7 @@ def test_full_load_relationships(postgres_db_dsn):
 
         # Clean up
         loader.cleanup(STAGING_TABLE, PRODUCTION_TABLE)
+        loader.conn.commit()
 
     # 3. Assert
     with psycopg.connect(postgres_db_dsn) as conn, conn.cursor() as cur:
