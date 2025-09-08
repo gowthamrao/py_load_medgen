@@ -1,8 +1,10 @@
+from typing import Iterator
 import pytest
 from testcontainers.postgres import PostgresContainer
 
+
 @pytest.fixture(scope="session")
-def postgres_db_dsn():
+def postgres_db_dsn() -> Iterator[str]:
     """
     A pytest fixture that starts a PostgreSQL container for the test session,
     and yields the database connection DSN.

@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+
 from py_load_medgen.downloader import Downloader
 
 # Suppress verbose logging from the downloader for this one-off script
@@ -12,7 +13,7 @@ def fetch_readme():
     download_dir = Path(".")
     readme_local_path = download_dir / "FTP_README.txt"
 
-    print(f"Attempting to download README from FTP server...")
+    print("Attempting to download README from FTP server...")
 
     try:
         with Downloader() as downloader:

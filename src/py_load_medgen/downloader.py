@@ -1,10 +1,10 @@
 import ftplib
+import hashlib
 import logging
 import re
 from pathlib import Path
 from typing import Optional
 
-import hashlib
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Configure logging

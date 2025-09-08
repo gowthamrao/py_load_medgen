@@ -1,31 +1,30 @@
+import gzip
 import io
 import uuid
+from pathlib import Path
+
 import psycopg
 import pytest
-from psycopg.errors import UndefinedTable
-
-import gzip
-from pathlib import Path
 
 from py_load_medgen.loader.postgres import PostgresNativeLoader
 from py_load_medgen.parser import (
-    parse_mrconso,
-    stream_mrconso_tsv,
-    parse_mrsty,
-    stream_mrsty_tsv,
     parse_hpo_mapping,
+    parse_mrconso,
+    parse_mrsty,
     stream_hpo_mapping_tsv,
+    stream_mrconso_tsv,
+    stream_mrsty_tsv,
 )
 from py_load_medgen.sql.ddl import (
-    STAGING_CONCEPTS_DDL,
     PRODUCTION_CONCEPTS_DDL,
     PRODUCTION_CONCEPTS_INDEXES_DDL,
-    STAGING_SEMANTIC_TYPES_DDL,
-    PRODUCTION_SEMANTIC_TYPES_DDL,
-    PRODUCTION_SEMANTIC_TYPES_INDEXES_DDL,
-    STAGING_MEDGEN_HPO_MAPPING_DDL,
     PRODUCTION_MEDGEN_HPO_MAPPING_DDL,
     PRODUCTION_MEDGEN_HPO_MAPPING_INDEXES_DDL,
+    PRODUCTION_SEMANTIC_TYPES_DDL,
+    PRODUCTION_SEMANTIC_TYPES_INDEXES_DDL,
+    STAGING_CONCEPTS_DDL,
+    STAGING_MEDGEN_HPO_MAPPING_DDL,
+    STAGING_SEMANTIC_TYPES_DDL,
 )
 
 # Sample MRCONSO.RRF data for testing.
@@ -47,14 +46,14 @@ def setup_teardown_tables(postgres_db_dsn):
             cur.execute(f"DROP TABLE IF EXISTS {STAGING_TABLE} CASCADE;")
             cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE} CASCADE;")
             cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE}_old CASCADE;")
-            cur.execute(f"DROP TABLE IF EXISTS etl_audit_log CASCADE;")
+            cur.execute("DROP TABLE IF EXISTS etl_audit_log CASCADE;")
     yield
     with psycopg.connect(postgres_db_dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(f"DROP TABLE IF EXISTS {STAGING_TABLE} CASCADE;")
             cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE} CASCADE;")
             cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE}_old CASCADE;")
-            cur.execute(f"DROP TABLE IF EXISTS etl_audit_log CASCADE;")
+            cur.execute("DROP TABLE IF EXISTS etl_audit_log CASCADE;")
 
 
 @pytest.mark.integration
@@ -102,7 +101,7 @@ def test_full_load_atomic_swap_with_raw_record(postgres_db_dsn):
     with psycopg.connect(postgres_db_dsn) as conn, conn.cursor() as cur:
         cur.execute(f"SELECT COUNT(*) FROM {PRODUCTION_TABLE}")
         assert cur.fetchone()[0] == 3
-        cur.execute(f"SELECT cui, str, raw_record FROM {PRODUCTION_TABLE} WHERE aui = 'A0019182'")
+        cur.execute(f"SELECT cui, record_str, raw_record FROM {PRODUCTION_TABLE} WHERE aui = 'A0019182'")
         record = cur.fetchone()
         assert record[0] == "C0001175"
         assert record[1] == "Acquired Immunodeficiency Syndromes"

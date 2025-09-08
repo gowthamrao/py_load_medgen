@@ -35,12 +35,25 @@ line-length = 88
 select = ["E", "F", "W", "I"]
 
 [tool.mypy]
-mypy_path = "src"
 strict = true
+
+[[tool.mypy.overrides]]
+module = [
+    "pytest",
+    "testcontainers.*",
+    "tenacity",
+    "psycopg",
+    "psycopg.*"
+]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 minversion = "6.0"
 addopts = "-ra -q"
 testpaths = [
     "tests",
+]
+markers = [
+    "unit: marks tests as unit tests",
+    "integration: marks tests as integration tests",
 ]

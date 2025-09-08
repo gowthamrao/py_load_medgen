@@ -5,10 +5,10 @@ from pathlib import Path
 from py_load_medgen.parser import (
     MedgenName,
     MrconsoRecord,
-    parse_names,
-    parse_mrconso,
     MrstyRecord,
+    parse_mrconso,
     parse_mrsty,
+    parse_names,
 )
 
 
@@ -75,7 +75,7 @@ def test_parse_mrconso_and_raw_record():
     assert records[0] == MrconsoRecord(
         cui='C0000005', lat='ENG', ts='P', lui='L0000005', stt='PF', sui='S0007492', ispref='Y', aui='A26634265',
         saui=None, scui='M0019694', sdui='D012711', sab='MSH', tty='PEN', code='D012711',
-        str='(131)I-Macroaggregated Albumin', srl='0', suppress='N', cvf='256', raw_record=content_lines[0]
+        record_str='(131)I-Macroaggregated Albumin', srl='0', suppress='N', cvf='256', raw_record=content_lines[0]
     )
     assert records[1].cui == "C0000039"
     assert records[1].raw_record == content_lines[1]

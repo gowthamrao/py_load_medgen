@@ -1,136 +1,155 @@
-import gzip
-import io
-from pathlib import Path
+import logging
 
 import psycopg
 import pytest
+
 from py_load_medgen.loader.postgres import PostgresNativeLoader
-from py_load_medgen.parser import parse_names, stream_names_tsv
+from py_load_medgen.parser import MedgenName, stream_names_tsv
 from py_load_medgen.sql.ddl import (
-    STAGING_NAMES_DDL,
     PRODUCTION_NAMES_DDL,
     PRODUCTION_NAMES_INDEXES_DDL,
+    STAGING_NAMES_DDL,
 )
 
 # --- Test Data ---
-# Version 1: Initial dataset
-V1_DATA = """\
-C001|First Name|SRC1|N|C001|First Name|SRC1|N
-C002|Second Name|SRC2|N|C002|Second Name|SRC2|N
-C003|Third Name|SRC3|Y|C003|Third Name|SRC3|Y
-"""
 
-# Version 2: Updated dataset
+# V1: Initial dataset with 3 records
+V1_DATA = [
+    MedgenName("C001", "Name One", "SRC", "N", "C001|Name One|SRC|N|"),
+    MedgenName("C002", "Name Two", "SRC", "N", "C002|Name Two|SRC|N|"),
+    MedgenName("C003", "Name Three", "SRC", "Y", "C003|Name Three|SRC|Y|"),
+]
+
+# V2: Updated dataset
 # - C001 is unchanged.
 # - C002 is removed (should be soft-deleted).
-# - C003 has its suppress flag changed (should be soft-deleted and re-inserted).
-# - C004 is new (should be inserted).
-V2_DATA = """\
-C001|First Name|SRC1|N|C001|First Name|SRC1|N
-C003|Third Name|SRC3|N|C003|Third Name|SRC3|N
-C004|Fourth Name|SRC4|N|C004|Fourth Name|SRC4|N
-"""
+# - C003 has its 'suppress' flag changed (will be treated as a delete-and-insert).
+# - C004 is new.
+V2_DATA = [
+    MedgenName("C001", "Name One", "SRC", "N", "C001|Name One|SRC|N|"),
+    MedgenName("C003", "Name Three", "SRC", "N", "C003|Name Three|SRC|N|"),
+    MedgenName("C004", "Name Four", "SRC", "N", "C004|Name Four|SRC|N|"),
+]
 
-STAGING_TABLE = "test_staging_names"
-PRODUCTION_TABLE = "test_medgen_names"
+STAGING_TABLE = "staging_medgen_names"
+PRODUCTION_TABLE = "medgen_names"
 PK_NAME = "name_id"
+# A business key identifies a unique record. For names, this is the combination of fields.
+BUSINESS_KEY = "cui, name, source, suppress"
 
 
 @pytest.fixture(autouse=True)
-def setup_teardown_tables(postgres_db_dsn):
+def setup_teardown_tables(postgres_db_dsn) -> None:
     """Ensures tables are dropped before and after each test for isolation."""
     with psycopg.connect(postgres_db_dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(f"DROP TABLE IF EXISTS {STAGING_TABLE} CASCADE;")
             cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE} CASCADE;")
             cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE}_old CASCADE;")
+            # Ensure CDC temp tables are gone
+            cur.execute("DROP TABLE IF EXISTS cdc_deletes; DROP TABLE IF EXISTS cdc_inserts;")
     yield
     with psycopg.connect(postgres_db_dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(f"DROP TABLE IF EXISTS {STAGING_TABLE} CASCADE;")
             cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE} CASCADE;")
             cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE}_old CASCADE;")
+            cur.execute("DROP TABLE IF EXISTS cdc_deletes; DROP TABLE IF EXISTS cdc_inserts;")
 
 
 @pytest.mark.integration
-def test_delta_load_scenario(postgres_db_dsn, tmp_path: Path):
+def test_delta_load_and_soft_delete_scenario(postgres_db_dsn) -> None:
     """
-    Tests the entire delta load workflow using testcontainers.
+    Tests the entire delta load workflow, including table creation on the first run,
+    and the correct application of inserts and soft-deletes on a subsequent run.
     """
-    # Helper to create gzipped test files
-    def create_gzipped_file(data: str, filename: str) -> Path:
-        file_path = tmp_path / filename
-        with gzip.open(file_path, "wt", encoding="utf-8") as f:
-            # Add a header to be skipped by the parser
-            f.write("#CUI|name|source|SUPPRESS|\n")
-            f.write(data)
-        return file_path
-
-    v1_file = create_gzipped_file(V1_DATA, "v1.gz")
-    v2_file = create_gzipped_file(V2_DATA, "v2.gz")
-
     with PostgresNativeLoader(db_dsn=postgres_db_dsn, autocommit=False) as loader:
-        # --- Phase 1: Initial Full Load ---
-        # A. Initialize Staging and Production tables
-        loader.initialize_staging(STAGING_TABLE, STAGING_NAMES_DDL.replace("staging_medgen_names", STAGING_TABLE))
-        with psycopg.connect(postgres_db_dsn) as conn:
-            with conn.cursor() as cur:
-                cur.execute(PRODUCTION_NAMES_DDL.format(table_name=PRODUCTION_TABLE))
-                conn.commit()
+        conn = loader.conn
 
-        # B. Load V1 data and apply as a full load
-        v1_records = parse_names(v1_file)
-        v1_bytes = stream_names_tsv(v1_records)
-        loader.bulk_load(STAGING_TABLE, v1_bytes)
+        # --- 1. Initial Delta Load (V1 data) ---
+        # This tests the fix: the delta load should create the production table.
+        logging.info("--- Running Initial Delta Load (V1) ---")
+        loader.initialize_staging(STAGING_TABLE, STAGING_NAMES_DDL)
+        v1_byte_iterator = stream_names_tsv(iter(V1_DATA))
+        loader.bulk_load(STAGING_TABLE, v1_byte_iterator)
+        conn.commit()
+
+        loader.execute_cdc(
+            staging_table=STAGING_TABLE,
+            production_table=PRODUCTION_TABLE,
+            pk_name=PK_NAME,
+            business_key=BUSINESS_KEY,
+        )
+        # No commit here, CDC temp tables must persist until apply_changes
+
         loader.apply_changes(
-            mode="full",
+            mode="delta",
             staging_table=STAGING_TABLE,
             production_table=PRODUCTION_TABLE,
             production_ddl=PRODUCTION_NAMES_DDL,
             index_ddls=PRODUCTION_NAMES_INDEXES_DDL,
             pk_name=PK_NAME,
+            business_key=BUSINESS_KEY,
         )
+        conn.commit()
 
-        # C. Verify initial state
-        with psycopg.connect(postgres_db_dsn) as conn:
-            with conn.cursor() as cur:
-                cur.execute(f"SELECT COUNT(*) FROM {PRODUCTION_TABLE} WHERE is_active = true")
-                assert cur.fetchone()[0] == 3
+        # --- Verification for Initial Load ---
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT COUNT(*) FROM {PRODUCTION_TABLE} WHERE is_active = true")
+            assert cur.fetchone()[0] == 3, "Initial delta load should insert 3 active records"
 
-        # --- Phase 2: Delta Load ---
-        # A. Load V2 data into staging
-        loader.initialize_staging(STAGING_TABLE, STAGING_NAMES_DDL.replace("staging_medgen_names", STAGING_TABLE))
-        v2_records = parse_names(v2_file)
-        v2_bytes = stream_names_tsv(v2_records)
-        loader.bulk_load(STAGING_TABLE, v2_bytes)
+        # --- 2. Second Delta Load (V2 data) ---
+        logging.info("--- Running Second Delta Load (V2) ---")
+        loader.initialize_staging(STAGING_TABLE, STAGING_NAMES_DDL)
+        v2_byte_iterator = stream_names_tsv(iter(V2_DATA))
+        loader.bulk_load(STAGING_TABLE, v2_byte_iterator)
+        conn.commit()
 
-        # B. Execute CDC and apply delta changes
-        loader.execute_cdc(STAGING_TABLE, PRODUCTION_TABLE, PK_NAME)
+        loader.execute_cdc(
+            staging_table=STAGING_TABLE,
+            production_table=PRODUCTION_TABLE,
+            pk_name=PK_NAME,
+            business_key=BUSINESS_KEY,
+        )
+        # No commit here
+
         loader.apply_changes(
             mode="delta",
             staging_table=STAGING_TABLE,
             production_table=PRODUCTION_TABLE,
-            production_ddl="",  # Not used in delta
-            index_ddls=[],     # Not used in delta
+            production_ddl=PRODUCTION_NAMES_DDL,
+            index_ddls=PRODUCTION_NAMES_INDEXES_DDL,
             pk_name=PK_NAME,
+            business_key=BUSINESS_KEY,
         )
+        conn.commit()
 
-        # --- Phase 3: Verification ---
-        with psycopg.connect(postgres_db_dsn) as conn:
-            with conn.cursor() as cur:
-                cur.execute(f"SELECT cui, name, is_active, suppress FROM {PRODUCTION_TABLE} ORDER BY cui, name, suppress")
-                results = cur.fetchall()
+        # --- Verification for Second Load ---
+        with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+            cur.execute(f"SELECT cui, name, is_active, suppress FROM {PRODUCTION_TABLE} ORDER BY cui, suppress")
+            results = cur.fetchall()
 
-                assert len(results) == 5
+            assert len(results) == 5, "Total records should be 5 (3 initial + 2 new - 2 old)"
 
-                active_records = [r for r in results if r[2]]
-                inactive_records = [r for r in results if not r[2]]
+            active_records = [r for r in results if r['is_active']]
+            inactive_records = [r for r in results if not r['is_active']]
 
-                assert len(active_records) == 3
-                assert ("C001", "First Name", True, "N") in active_records
-                assert ("C003", "Third Name", True, "N") in active_records
-                assert ("C004", "Fourth Name", True, "N") in active_records
+            assert len(active_records) == 3, "There should be 3 active records after delta"
+            assert len(inactive_records) == 2, "There should be 2 inactive (soft-deleted) records"
 
-                assert len(inactive_records) == 2
-                assert ("C002", "Second Name", False, "N") in inactive_records
-                assert ("C003", "Third Name", False, "Y") in inactive_records
+            # Check the state of each record
+            record_states = { (r['cui'], r['suppress']): r['is_active'] for r in results }
+
+            # C001 was untouched, should be active
+            assert record_states[("C001", "N")] is True
+            # C002 was deleted, should be inactive
+            assert record_states[("C002", "N")] is False
+            # Old C003 was updated, so it should be inactive
+            assert record_states[("C003", "Y")] is False
+            # New C003 was inserted, should be active
+            assert record_states[("C003", "N")] is True
+            # C004 was inserted, should be active
+            assert record_states[("C004", "N")] is True
+
+        loader.cleanup(STAGING_TABLE, PRODUCTION_TABLE)
+        conn.commit()
