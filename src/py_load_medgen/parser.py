@@ -103,33 +103,33 @@ def stream_hpo_mapping_tsv(records: Iterator[MedgenHpoMapping]) -> Iterator[byte
         yield (line + "\n").encode("utf-8")
 
 
-def parse_mrconso(file_stream: IO[str]) -> Iterator[MrconsoRecord]:
+def parse_mrconso(file_stream: IO[str], max_errors: int) -> Iterator[MrconsoRecord]:
     """
     Parses a pipe-delimited MRCONSO.RRF file stream.
     Args:
         file_stream: A text file-like object containing MRCONSO.RRF data.
+        max_errors: The maximum number of parsing errors to tolerate.
     Yields:
         MrconsoRecord instances for each valid row in the file.
+    Raises:
+        ValueError: If the number of parsing errors exceeds max_errors.
     """
-    # The RRF format is pipe-delimited, and each row ends with a pipe.
-    # We can't use the csv module directly with the file_stream iterator
-    # because we need to preserve the raw line.
+    error_count = 0
     for i, line in enumerate(file_stream):
         raw_line = line.strip()
         if not raw_line:
             continue
 
         row = raw_line.split("|")
-        # After splitting, a valid row will have 19 elements, with the last one being empty.
-        if len(row) < 18:
+        if len(row) < 19: # A valid RRF row with 18 fields will have 19 elements after splitting on the trailing pipe
+            error_count += 1
             logging.warning(
                 f"Skipping malformed row {i+1}: expected 18 columns, found {len(row) - 1}"
             )
+            if error_count > max_errors:
+                raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
             continue
 
-        # Unpack the row into the dataclass fields.
-        # Optional fields (saui, scui, sdui, cvf) are empty strings in the file if null.
-        # We convert them to None for type consistency.
         try:
             yield MrconsoRecord(
                 cui=row[0],
@@ -153,19 +153,25 @@ def parse_mrconso(file_stream: IO[str]) -> Iterator[MrconsoRecord]:
                 raw_record=raw_line,
             )
         except IndexError:
+            error_count += 1
             logging.warning(f"Skipping malformed row {i+1}: not enough columns.")
+            if error_count > max_errors:
+                raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
 
 
-def parse_names(file_path: Path) -> Iterator[MedgenName]:
+def parse_names(file_path: Path, max_errors: int) -> Iterator[MedgenName]:
     """
     Parses a gzipped, pipe-delimited NAMES.RRF.gz file.
     Args:
         file_path: Path to the gzipped file.
+        max_errors: The maximum number of parsing errors to tolerate.
     Yields:
         MedgenName instances for each valid row in the file.
+    Raises:
+        ValueError: If the number of parsing errors exceeds max_errors.
     """
+    error_count = 0
     with gzip.open(file_path, "rt", encoding="utf-8") as f:
-        # Skip header
         header = f.readline()
         if not header.startswith("#CUI"):
             logging.warning("NAMES.RRF file does not have the expected header.")
@@ -176,11 +182,13 @@ def parse_names(file_path: Path) -> Iterator[MedgenName]:
                 continue
 
             row = raw_line.split("|")
-            # Each row should have 5 elements, with the last one being empty.
             if len(row) < 5:
+                error_count += 1
                 logging.warning(
                     f"Skipping malformed row {i+1} in NAMES.RRF: expected 4 columns, found {len(row) - 1}"
                 )
+                if error_count > max_errors:
+                    raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
                 continue
 
             yield MedgenName(
@@ -192,20 +200,21 @@ def parse_names(file_path: Path) -> Iterator[MedgenName]:
             )
 
 
-def parse_hpo_mapping(file_path: Path) -> Iterator[MedgenHpoMapping]:
+def parse_hpo_mapping(file_path: Path, max_errors: int) -> Iterator[MedgenHpoMapping]:
     """
     Parses a gzipped, tab-delimited MedGen_HPO_Mapping.txt.gz file.
     Args:
         file_path: Path to the gzipped file.
+        max_errors: The maximum number of parsing errors to tolerate.
     Yields:
         MedgenHpoMapping instances for each valid row in the file.
+    Raises:
+        ValueError: If the number of parsing errors exceeds max_errors.
     """
+    error_count = 0
     with gzip.open(file_path, "rt", encoding="utf-8") as f:
-        # The README implies a header, but doesn't show it. We'll check for it.
-        # It's safer to read the first line and check if it looks like a header.
         first_line = f.readline()
         if not first_line.lower().startswith("#cui") and not first_line.lower().startswith("cui"):
-            # If it doesn't look like a header, process it as a data line
             f.seek(0)
 
         for i, line in enumerate(f):
@@ -213,13 +222,15 @@ def parse_hpo_mapping(file_path: Path) -> Iterator[MedgenHpoMapping]:
             if not raw_line:
                 continue
 
-            # This file is tab-delimited
             row = raw_line.split("\t")
             if len(row) != 6:
+                error_count += 1
                 logging.warning(
                     f"Skipping malformed row {i+1} in HPO Mapping file: "
                     f"expected 6 columns, found {len(row)}"
                 )
+                if error_count > max_errors:
+                    raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
                 continue
 
             yield MedgenHpoMapping(
@@ -272,25 +283,31 @@ def stream_mrrel_tsv(records: Iterator[MrrelRecord]) -> Iterator[bytes]:
         yield (line + "\n").encode("utf-8")
 
 
-def parse_mrrel(file_stream: IO[str]) -> Iterator[MrrelRecord]:
+def parse_mrrel(file_stream: IO[str], max_errors: int) -> Iterator[MrrelRecord]:
     """
     Parses a pipe-delimited MRREL.RRF file stream.
     Args:
         file_stream: A text file-like object containing MRREL.RRF data.
+        max_errors: The maximum number of parsing errors to tolerate.
     Yields:
         MrrelRecord instances for each valid row in the file.
+    Raises:
+        ValueError: If the number of parsing errors exceeds max_errors.
     """
+    error_count = 0
     for i, line in enumerate(file_stream):
         raw_line = line.strip()
         if not raw_line:
             continue
 
         row = raw_line.split("|")
-        # After splitting, a valid row will have 17 elements, with the last one being empty.
-        if len(row) < 16:
+        if len(row) < 17:
+            error_count += 1
             logging.warning(
                 f"Skipping malformed row {i+1} in MRREL.RRF: expected 16 columns, found {len(row) - 1}"
             )
+            if error_count > max_errors:
+                raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
             continue
 
         try:
@@ -314,7 +331,10 @@ def parse_mrrel(file_stream: IO[str]) -> Iterator[MrrelRecord]:
                 raw_record=raw_line,
             )
         except IndexError:
+            error_count += 1
             logging.warning(f"Skipping malformed row {i+1} in MRREL.RRF: not enough columns.")
+            if error_count > max_errors:
+                raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
 
 
 @dataclass(frozen=True)
@@ -346,25 +366,31 @@ def stream_mrsty_tsv(records: Iterator[MrstyRecord]) -> Iterator[bytes]:
         yield (line + "\n").encode("utf-8")
 
 
-def parse_mrsty(file_stream: IO[str]) -> Iterator[MrstyRecord]:
+def parse_mrsty(file_stream: IO[str], max_errors: int) -> Iterator[MrstyRecord]:
     """
     Parses a pipe-delimited MRSTY.RRF file stream.
     Args:
         file_stream: A text file-like object containing MRSTY.RRF data.
+        max_errors: The maximum number of parsing errors to tolerate.
     Yields:
         MrstyRecord instances for each valid row in the file.
+    Raises:
+        ValueError: If the number of parsing errors exceeds max_errors.
     """
+    error_count = 0
     for i, line in enumerate(file_stream):
         raw_line = line.strip()
         if not raw_line:
             continue
 
         row = raw_line.split("|")
-        # After splitting, a valid row will have 7 elements, with the last one being empty.
-        if len(row) < 6:
+        if len(row) < 7:
+            error_count += 1
             logging.warning(
                 f"Skipping malformed row {i+1} in MRSTY.RRF: expected 6 columns, found {len(row) - 1}"
             )
+            if error_count > max_errors:
+                raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
             continue
 
         try:
@@ -378,4 +404,7 @@ def parse_mrsty(file_stream: IO[str]) -> Iterator[MrstyRecord]:
                 raw_record=raw_line,
             )
         except IndexError:
+            error_count += 1
             logging.warning(f"Skipping malformed row {i+1} in MRSTY.RRF: not enough columns.")
+            if error_count > max_errors:
+                raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
