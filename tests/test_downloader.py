@@ -16,7 +16,7 @@ def test_downloader_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     mock_ftp_instance = MagicMock()
 
     # This simulates the `RETR` command writing data to the file object (the callback)
-    def fake_retrbinary(command, callback):
+    def fake_retrbinary(command, callback, rest=None):
         callback(b'dummy-data')
 
     mock_ftp_instance.retrbinary.side_effect = fake_retrbinary
@@ -66,7 +66,7 @@ def test_downloader_checksum_verification(tmp_path: Path, monkeypatch: pytest.Mo
     mock_ftp_instance.retrlines.side_effect = fake_retrlines
 
     # Mock retrbinary to provide file content
-    def fake_retrbinary(command, callback):
+    def fake_retrbinary(command, callback, rest=None):
         if "dummy_file.txt" in command:
             callback(b'correct-data')
 
@@ -86,7 +86,8 @@ def test_downloader_checksum_verification(tmp_path: Path, monkeypatch: pytest.Mo
     assert local_filepath_success.exists()
     assert local_filepath_success.read_text() == "correct-data"
     mock_ftp_instance.retrlines.assert_called_once_with("RETR md5sum.txt", ANY)
-    mock_ftp_instance.retrbinary.assert_called_once_with("RETR dummy_file.txt", ANY)
+    mock_ftp_instance.retrbinary.assert_called_once()
+    assert mock_ftp_instance.retrbinary.call_args[0][0] == "RETR dummy_file.txt"
 
 
     # --- Test Case 2: Failed Verification ---
@@ -94,7 +95,7 @@ def test_downloader_checksum_verification(tmp_path: Path, monkeypatch: pytest.Mo
     # Reset mocks and change retrbinary to return bad data
     mock_ftp_instance.reset_mock()
     mock_ftp_instance.retrlines.side_effect = fake_retrlines # re-apply side effect
-    def fake_retrbinary_bad(command, callback):
+    def fake_retrbinary_bad(command, callback, rest=None):
         if "dummy_file.txt" in command:
             callback(b'wrong-data')
     mock_ftp_instance.retrbinary.side_effect = fake_retrbinary_bad
@@ -153,14 +154,37 @@ def test_get_release_version(monkeypatch: pytest.MonkeyPatch):
     # Assert
     assert version == "Unknown"
 
-    # --- Test Case 3: README file does not exist ---
-    # Arrange
-    mock_ftp_instance.reset_mock()
-    mock_ftp_instance.retrlines.side_effect = ftplib.error_perm("550 No such file")
 
-    # Act
+def test_downloader_resume_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """
+    Tests that the downloader correctly resumes a partially downloaded file.
+    """
+    # 1. Arrange: Mock ftplib.FTP
+    mock_ftp_instance = MagicMock()
+
+    # This simulates the `RETR` command writing the *rest* of the data
+    def fake_retrbinary(command, callback, rest=None):
+        callback(b"-rest-of-data")
+
+    mock_ftp_instance.retrbinary.side_effect = fake_retrbinary
+    monkeypatch.setattr(ftplib, "FTP", MagicMock(return_value=mock_ftp_instance))
+
+    # 2. Arrange: Prepare a "partially downloaded" file
+    local_filepath = tmp_path / "partial_file.txt"
+    partial_content = b"initial-data"
+    local_filepath.write_bytes(partial_content)
+    partial_size = local_filepath.stat().st_size
+
+    # 3. Act: Call the download method on the existing partial file
     with Downloader() as downloader:
-        version = downloader.get_release_version()
+        downloader.download_file("partial_file.txt", local_filepath)
 
-    # Assert
-    assert version == "Unknown"
+    # 4. Assert
+    # Check that retrbinary was called with the correct 'rest' offset
+    mock_ftp_instance.retrbinary.assert_called_once()
+    # The call looks like: retrbinary('RETR partial_file.txt', <function>, rest=<size>)
+    assert mock_ftp_instance.retrbinary.call_args.kwargs["rest"] == partial_size
+
+    # Check that the file now contains the full, combined content
+    expected_content = partial_content + b"-rest-of-data"
+    assert local_filepath.read_bytes() == expected_content

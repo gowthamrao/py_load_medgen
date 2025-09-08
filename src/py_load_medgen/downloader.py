@@ -147,7 +147,9 @@ class Downloader:
         self, remote_filename: str, local_filepath: Path, checksums: Optional[dict[str, str]] = None
     ) -> None:
         """
-        Downloads a single file from the FTP server and verifies its checksum.
+        Downloads a single file from the FTP server, resuming if partially downloaded,
+        and verifies its checksum upon completion.
+
         Args:
             remote_filename: The name of the file on the FTP server.
             local_filepath: The local path to save the downloaded file.
@@ -158,18 +160,39 @@ class Downloader:
 
         try:
             local_filepath.parent.mkdir(parents=True, exist_ok=True)
-            logging.info(f"Downloading {remote_filename} to {local_filepath}...")
-            with open(local_filepath, "wb") as f:
-                self.ftp.retrbinary(f"RETR {remote_filename}", f.write)
+
+            # --- Resumption Logic ---
+            rest_pos = 0
+            open_mode = "wb"
+            if local_filepath.exists():
+                rest_pos = local_filepath.stat().st_size
+                open_mode = "ab"
+
+            if rest_pos > 0:
+                logging.info(
+                    f"Resuming download for {remote_filename} from byte {rest_pos}."
+                )
+            else:
+                logging.info(f"Downloading {remote_filename} to {local_filepath}...")
+
+            # The 'rest' argument tells retrbinary where to start the download.
+            with open(local_filepath, open_mode) as f:
+                # The `rest` parameter is passed to the underlying `sendcmd`, so it should only
+                # be provided when we are actually resuming.
+                self.ftp.retrbinary(
+                    f"RETR {remote_filename}", f.write, rest=rest_pos if rest_pos > 0 else None
+                )
+
             logging.info(f"Successfully downloaded {remote_filename}")
 
             if checksums:
                 if not self.verify_file(local_filepath, checksums):
+                    # If checksum fails, the file is corrupt. Delete it for a clean retry.
+                    local_filepath.unlink()
                     raise ValueError(f"Checksum validation failed for {remote_filename}")
 
         except (*ftplib.all_errors, ValueError) as e:
             logging.error(f"Error during download or verification of {remote_filename}: {e}")
-            # Clean up partially downloaded file
-            if local_filepath.exists():
-                local_filepath.unlink()
+            # If it's a checksum error, the file is already deleted.
+            # If it's an FTP error, we leave the partial file in place for the next retry attempt.
             raise

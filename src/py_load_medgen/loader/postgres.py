@@ -258,13 +258,44 @@ class PostgresNativeLoader(AbstractNativeLoader):
         logging.info(f"CDC complete. Inserts: {insert_count}, Deletes: {delete_count}")
         return {"inserts": insert_count, "deletes": delete_count}
 
+    def _get_table_indexes(self, table_name: str) -> list[str]:
+        """
+        Retrieves the DDL for all non-primary-key indexes on a given table.
+        Args:
+            table_name: The name of the table to inspect.
+        Returns:
+            A list of `CREATE INDEX` statements.
+        """
+        if not self.conn:
+            raise ConnectionError("Database connection not established.")
+
+        logging.info(f"Discovering indexes for table: {table_name}")
+        # This query joins pg_indexes with pg_class to filter out primary key
+        # indexes, which are handled automatically by the table DDL.
+        sql = """
+            SELECT indexdef
+            FROM pg_indexes i
+            JOIN pg_class c ON i.indexname = c.relname
+            LEFT JOIN pg_constraint con ON c.oid = con.conindid
+            WHERE i.tablename = %s AND con.contype IS DISTINCT FROM 'p';
+        """
+        with self.conn.cursor() as cur:
+            try:
+                cur.execute(sql, (table_name,))
+                # The query returns a list of tuples, e.g., [('CREATE INDEX...',)]
+                index_ddls = [row[0] for row in cur.fetchall()]
+                logging.info(f"Found {len(index_ddls)} non-PK indexes for {table_name}.")
+                return index_ddls
+            except psycopg.errors.UndefinedTable:
+                logging.warning(f"Table '{table_name}' does not exist, cannot discover indexes. Returning empty list.")
+                return []
+
     def apply_changes(
         self,
         mode: str,
         staging_table: str,
         production_table: str,
         production_ddl: str,
-        index_ddls: list[str],
         pk_name: str,
         business_key: str,
     ) -> None:
@@ -274,21 +305,28 @@ class PostgresNativeLoader(AbstractNativeLoader):
         - 'delta': Applies inserts and soft deletes identified by CDC.
         """
         if mode == "full":
-            self._apply_full_load(staging_table, production_table, production_ddl, index_ddls)
+            self._apply_full_load(staging_table, production_table, production_ddl)
         elif mode == "delta":
             self._apply_delta_load(production_table, pk_name)
         else:
             raise ValueError(f"Unknown load mode: {mode}")
 
     def _apply_full_load(
-        self, staging_table: str, production_table: str, production_ddl: str, index_ddls: list[str]
+        self, staging_table: str, production_table: str, production_ddl: str
     ) -> None:
-        """Applies changes atomically using the 'atomic swap' method for a full load."""
+        """
+        Applies changes atomically using the 'atomic swap' method for a full load.
+        It automatically discovers and replicates indexes from the old production table.
+        """
         if not self.conn:
             raise ConnectionError("Database connection not established.")
 
         new_production_table = f"{production_table}_new"
         backup_table = f"{production_table}_old"
+
+        # Discover indexes on the current production table before doing anything else.
+        # This handles the initial case where the production table might not exist yet.
+        index_ddls = self._get_table_indexes(production_table)
 
         logging.info(f"Applying FULL load for table {production_table} with atomic swap...")
         with self.conn.cursor() as cur:
@@ -308,9 +346,19 @@ class PostgresNativeLoader(AbstractNativeLoader):
             insert_sql = f"INSERT INTO {new_production_table} ({column_list_str}) SELECT {column_list_str} FROM {staging_table};"
             cur.execute(insert_sql)
 
-            # Create indexes
+            # Create indexes on the new table. The discovered index DDL contains the old
+            # table name, so we must replace it with the new table name.
+            logging.info(f"Replicating {len(index_ddls)} indexes on new table {new_production_table}...")
             for index_ddl in index_ddls:
-                cur.execute(index_ddl.format(table_name=new_production_table))
+                # Use a more precise replacement to avoid incorrectly renaming the index itself
+                # if the table name is part of the index name.
+                prefix, sep, suffix = index_ddl.rpartition(f" ON {production_table}")
+                if sep:
+                    replicated_ddl = prefix + f" ON {new_production_table}" + suffix
+                else:
+                    # Fallback for safety, though pg_get_indexdef should be consistent
+                    replicated_ddl = index_ddl.replace(production_table, new_production_table)
+                cur.execute(replicated_ddl)
 
             # Perform the atomic swap
             logging.info("Performing atomic swap in a single transaction...")
