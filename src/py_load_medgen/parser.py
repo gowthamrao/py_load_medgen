@@ -408,3 +408,91 @@ def parse_mrsty(file_stream: IO[str], max_errors: int) -> Iterator[MrstyRecord]:
             logging.warning(f"Skipping malformed row {i+1} in MRSTY.RRF: not enough columns.")
             if error_count > max_errors:
                 raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
+
+
+@dataclass(frozen=True)
+class MrsatRecord:
+    """
+    Represents a single record from the MRSAT.RRF file.
+    Field names correspond to the columns defined in the UMLS Reference Manual.
+    See: https://www.ncbi.nlm.nih.gov/books/NBK9685/table/ch03.T.simple_concept_and_atom_attribute/
+    """
+
+    cui: str
+    lui: Optional[str]
+    sui: Optional[str]
+    metaui: Optional[str]
+    stype: str
+    code: Optional[str]
+    atui: str
+    satui: Optional[str]
+    atn: str
+    sab: str
+    atv: Optional[str]
+    suppress: str
+    cvf: Optional[str]
+    raw_record: str
+
+
+def stream_mrsat_tsv(records: Iterator[MrsatRecord]) -> Iterator[bytes]:
+    """
+    Transforms an iterator of MrsatRecord objects into a streaming iterator
+    of UTF-8 encoded TSV lines.
+    """
+    for record in records:
+        line = "\t".join(
+            str(getattr(record, field.name) or r"\N") for field in fields(record)
+        )
+        yield (line + "\n").encode("utf-8")
+
+
+def parse_mrsat(file_stream: IO[str], max_errors: int) -> Iterator[MrsatRecord]:
+    """
+    Parses a pipe-delimited MRSAT.RRF file stream.
+    Args:
+        file_stream: A text file-like object containing MRSAT.RRF data.
+        max_errors: The maximum number of parsing errors to tolerate.
+    Yields:
+        MrsatRecord instances for each valid row in the file.
+    Raises:
+        ValueError: If the number of parsing errors exceeds max_errors.
+    """
+    error_count = 0
+    for i, line in enumerate(file_stream):
+        raw_line = line.strip()
+        if not raw_line:
+            continue
+
+        row = raw_line.split("|")
+        # A valid RRF row with 13 fields will have 14 elements after splitting on the trailing pipe
+        if len(row) < 14:
+            error_count += 1
+            logging.warning(
+                f"Skipping malformed row {i+1} in MRSAT.RRF: expected 13 columns, found {len(row) - 1}"
+            )
+            if error_count > max_errors:
+                raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
+            continue
+
+        try:
+            yield MrsatRecord(
+                cui=row[0],
+                lui=row[1] if row[1] else None,
+                sui=row[2] if row[2] else None,
+                metaui=row[3] if row[3] else None,
+                stype=row[4],
+                code=row[5] if row[5] else None,
+                atui=row[6],
+                satui=row[7] if row[7] else None,
+                atn=row[8],
+                sab=row[9],
+                atv=row[10] if row[10] else None,
+                suppress=row[11],
+                cvf=row[12] if row[12] else None,
+                raw_record=raw_line,
+            )
+        except IndexError:
+            error_count += 1
+            logging.warning(f"Skipping malformed row {i+1} in MRSAT.RRF: not enough columns.")
+            if error_count > max_errors:
+                raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
