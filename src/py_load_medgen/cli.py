@@ -8,7 +8,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any, Callable, Iterator, NotRequired, TypedDict, TypeVar
 
-from py_load_medgen.downloader import Downloader
+from py_load_medgen.downloader import ChecksumsNotFoundError, Downloader
 from py_load_medgen.loader.factory import LoaderFactory
 from py_load_medgen.parser import (
     parse_hpo_mapping,
@@ -183,6 +183,12 @@ def main():
         help="The maximum number of parsing errors to tolerate "
         "before aborting the ETL process.",
     )
+    parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="Skip file integrity verification. Use this if the FTP server "
+        "does not provide a checksums file.",
+    )
 
     args = parser.parse_args()
 
@@ -213,19 +219,26 @@ def main():
         with Downloader(
             ftp_host=NCBI_FTP_HOST, ftp_path=NCBI_FTP_PATH
         ) as downloader:
-            # Get release version from README
             release_version = downloader.get_release_version()
             logging.info(f"MedGen Release Version: {release_version}")
 
-            ftp_files = downloader.list_files()
-            checksum_file = next((f for f in ftp_files if "md5" in f.lower()), None)
-            checksums = {}
-            if checksum_file:
-                logging.info(f"Found checksum file: {checksum_file}")
-                checksums = downloader.get_checksums(checksum_file)
+            checksums = None
+            if not args.no_verify:
+                try:
+                    # Try to find the checksum file automatically.
+                    # Common names are md5sum.txt or MD5SUMS
+                    ftp_files = downloader.list_files()
+                    checksum_filename = next(
+                        (f for f in ftp_files if "md5" in f.lower()), "md5sum.txt"
+                    )
+                    logging.info(f"Attempting to use checksum file: {checksum_filename}")
+                    checksums = downloader.get_checksums(checksum_filename)
+                except ChecksumsNotFoundError as e:
+                    logging.error(f"Checksum verification failed: {e}")
+                    sys.exit(1)
             else:
                 logging.warning(
-                    "No checksum file found. Skipping file integrity verification."
+                    "Running with --no-verify. File integrity will not be checked."
                 )
 
             for config in ETL_CONFIG:
@@ -234,9 +247,10 @@ def main():
                 downloader.download_file(remote_file, local_path, checksums)
                 local_file_paths[remote_file] = local_path
                 # Prepare source file info for logging
-                source_file_checksums[remote_file] = checksums.get(remote_file)
+                if checksums and remote_file in checksums:
+                    source_file_checksums[remote_file] = checksums.get(remote_file)
 
-    except Exception as e:
+    except (Exception, ChecksumsNotFoundError) as e:
         logging.error(f"Failed during download phase: {e}", exc_info=True)
         sys.exit(1)
 

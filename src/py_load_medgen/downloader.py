@@ -13,6 +13,12 @@ logging.basicConfig(
 )
 
 
+class ChecksumsNotFoundError(Exception):
+    """Custom exception raised when the checksum file is not found on the FTP server."""
+
+    pass
+
+
 class Downloader:
     """
     Handles downloading data files from the NCBI FTP server with retry logic.
@@ -76,10 +82,10 @@ class Downloader:
                     checksums[filename.lstrip("./")] = checksum
             return checksums
         except ftplib.all_errors as e:
-            logging.warning(
-                f"Could not find or parse checksum file '{checksum_filename}': {e}"
-            )
-            return {}  # Return empty dict if checksums aren't available
+            raise ChecksumsNotFoundError(
+                f"Could not find or parse checksum file '{checksum_filename}' on the FTP server. "
+                f"To proceed without verification, use the --no-verify flag. Original error: {e}"
+            ) from e
 
     def get_release_version(self, readme_filename: str = "README") -> str:
         """
@@ -134,8 +140,9 @@ class Downloader:
         """
         filename = local_filepath.name
         if filename not in checksums:
-            logging.warning(f"No checksum found for {filename}. Skipping verification.")
-            return True # Cannot verify, so assume it's okay for now.
+            # This case should ideally not be hit if get_checksums is successful
+            # and the file is in the manifest.
+            raise ValueError(f"No checksum found for '{filename}' in the provided checksums dictionary.")
 
         expected_md5 = checksums[filename]
         logging.info(f"Verifying checksum for {filename}...")
@@ -206,7 +213,7 @@ class Downloader:
 
             logging.info(f"Successfully downloaded {remote_filename}")
 
-            if checksums:
+            if checksums is not None:
                 if not self.verify_file(local_filepath, checksums):
                     # If checksum fails, the file is corrupt.
                     # Delete it for a clean retry.
