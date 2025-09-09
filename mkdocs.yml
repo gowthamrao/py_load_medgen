@@ -43,4 +43,5 @@ nav:
   - Architecture: architecture.md
   - Usage:
     - CLI Reference: cli.md
+  - Extending the Loader: extending.md
   - API Reference: reference.md
