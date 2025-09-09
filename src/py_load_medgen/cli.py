@@ -149,21 +149,6 @@ ETL_CONFIG: list[EtlFileConfig] = [
 ]
 
 
-# --- Helper for counting records in a stream ---
-T = TypeVar("T")
-
-
-class Counter:
-    value: int = 0
-
-
-def count_iterator(iterator: Iterator[T], counter: Counter) -> Iterator[T]:
-    """Wraps an iterator to count the number of items yielded."""
-    for item in iterator:
-        counter.value += 1
-        yield item
-
-
 def main():
     """Main CLI entry point for the MedGen ETL tool."""
     parser = argparse.ArgumentParser(
@@ -273,55 +258,58 @@ def main():
 
             for config in ETL_CONFIG:
                 local_path = local_file_paths[config["file"]]
+                table_metrics = {
+                    "table_name": config["prod_table"],
+                    "records_extracted": 0,
+                    "records_inserted": 0,
+                    "records_updated": 0,
+                    "records_deleted": 0,
+                }
 
                 logging.info(
                     f"--- Starting ETL for {config['file']} -> "
                     f"{config['prod_table']} ---"
                 )
 
-                # A. Initialize Staging
+                # 1. Initialize Staging
                 loader.initialize_staging(
                     config["staging_table"], config["staging_ddl"]
                 )
 
-                # B. Parse, Transform, and Load
+                # 2. Parse, Transform, and Load into Staging
                 logging.info(f"Opening and parsing {local_path}...")
-                record_counter = Counter()
                 f = None
                 try:
                     parser_func = config["parser"]
+                    # Determine how to open the file (gzipped or plain text)
                     if config["file"].endswith(".gz"):
-                        # For gzipped files, the parser function takes the path
                         records_iterator = parser_func(
                             local_path, max_errors=args.max_parse_errors
                         )
                     else:
-                        # For plain text files, the parser takes a file stream
                         f = open(local_path, "r", encoding="utf-8")
                         records_iterator = parser_func(
                             f, max_errors=args.max_parse_errors
                         )
 
-                    counted_records = count_iterator(records_iterator, record_counter)
-                    byte_iterator = config["transformer"](counted_records)
-                    loader.bulk_load(config["staging_table"], byte_iterator)
-
-                    logging.info(
-                        f"Finished loading data into {config['staging_table']}."
+                    # Transform records to bytes and load, capturing the count
+                    byte_iterator = config["transformer"](records_iterator)
+                    extracted_count = loader.bulk_load(
+                        config["staging_table"], byte_iterator
                     )
+                    table_metrics["records_extracted"] = extracted_count
+                    total_records_extracted += extracted_count
                     logging.info(
-                        f"Extracted and loaded {record_counter.value} records."
+                        f"Extracted and staged {extracted_count} records."
                     )
-                    total_records_extracted += record_counter.value
-                    total_records_loaded += record_counter.value
-
                 finally:
                     if f:
                         f.close()
 
-                # C. Apply Changes based on mode and log details
+                # 3. Apply Changes to Production and Capture Metrics
+                apply_metrics = {}
                 if args.mode == "full":
-                    loader.apply_changes(
+                    apply_metrics = loader.apply_changes(
                         mode="full",
                         staging_table=config["staging_table"],
                         production_table=config["prod_table"],
@@ -330,33 +318,16 @@ def main():
                         pk_name=config["prod_pk"],
                         full_load_select_sql=config.get("full_load_select_sql"),
                     )
-                    # For full loads, extracted equals inserted
-                    metrics = {
-                        "table_name": config["prod_table"],
-                        "records_extracted": record_counter.value,
-                        "records_inserted": record_counter.value,
-                        "records_deleted": 0,
-                        "records_updated": 0,
-                    }
-                    loader.log_run_detail(log_id, metrics)
-
                 elif args.mode == "delta":
-                    cdc_metrics = loader.execute_cdc(
+                    # First, run CDC to identify changes
+                    loader.execute_cdc(
                         staging_table=config["staging_table"],
                         production_table=config["prod_table"],
                         pk_name=config["prod_pk"],
                         business_key=config["business_key"],
                     )
-                    # For delta loads, log CDC results
-                    metrics = {
-                        "table_name": config["prod_table"],
-                        "records_extracted": record_counter.value,
-                        "records_inserted": cdc_metrics.get("inserts", 0),
-                        "records_deleted": cdc_metrics.get("deletes", 0),
-                        "records_updated": cdc_metrics.get("updates", 0),
-                    }
-                    loader.log_run_detail(log_id, metrics)
-                    loader.apply_changes(
+                    # Then, apply the identified changes
+                    apply_metrics = loader.apply_changes(
                         mode="delta",
                         staging_table=config["staging_table"],
                         production_table=config["prod_table"],
@@ -366,6 +337,18 @@ def main():
                         business_key=config["business_key"],
                     )
 
+                # 4. Update and Log Detailed Metrics
+                table_metrics["records_inserted"] = apply_metrics.get("inserted", 0)
+                table_metrics["records_updated"] = apply_metrics.get("updated", 0)
+                table_metrics["records_deleted"] = apply_metrics.get("deleted", 0)
+                loader.log_run_detail(log_id, table_metrics)
+
+                # 5. Aggregate Total Loaded Records for the Final Summary
+                # "Loaded" means a record is new or changed in the production table.
+                total_records_loaded += table_metrics["records_inserted"]
+                total_records_loaded += table_metrics["records_updated"]
+
+                # 6. Cleanup Staging and Backup Tables
                 loader.cleanup(config["staging_table"], config["prod_table"])
 
             # 4. Log success if we reached the end
