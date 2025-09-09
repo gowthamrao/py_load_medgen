@@ -302,3 +302,149 @@ def test_delta_load_with_updates(postgres_db_dsn) -> None:
             assert record_states["A003"] == ("Record Three", True)
             # A004 was inserted
             assert record_states["A004"] == ("Record Four", True)
+
+
+# --- Test Data for Reactivation Scenario ---
+
+# V1: Initial dataset
+REACTIVATION_V1 = [
+    MrconsoRecord(
+        "C1", "ENG", "P", "L1", "PF", "S1", "Y", "A1", None, "M1", "D1",
+        "SRC", "PT", "CODE1", "Record 1, Version 1", "0", "N", None, "raw1",
+    ),
+    MrconsoRecord(
+        "C2", "ENG", "P", "L2", "PF", "S2", "Y", "A2", None, "M2", "D2",
+        "SRC", "PT", "CODE2", "Record 2", "0", "N", None, "raw2",
+    ),
+]
+
+# V2: Record A1 is removed
+REACTIVATION_V2 = [
+    MrconsoRecord(
+        "C2", "ENG", "P", "L2", "PF", "S2", "Y", "A2", None, "M2", "D2",
+        "SRC", "PT", "CODE2", "Record 2", "0", "N", None, "raw2",
+    ),
+]
+
+# V3: Record A1 is re-introduced with an updated string
+REACTIVATION_V3 = [
+    MrconsoRecord(
+        "C1", "ENG", "P", "L1", "PF", "S1", "Y", "A1", None, "M1", "D1",
+        "SRC", "PT", "CODE1", "Record 1, Version 2", "0", "N", None, "raw1_v2",
+    ),
+    MrconsoRecord(
+        "C2", "ENG", "P", "L2", "PF", "S2", "Y", "A2", None, "M2", "D2",
+        "SRC", "PT", "CODE2", "Record 2", "0", "N", None, "raw2",
+    ),
+]
+
+
+@pytest.mark.integration
+def test_delta_load_reactivation_scenario(postgres_db_dsn) -> None:
+    """
+    Tests that a soft-deleted record is correctly "reactivated" if it reappears
+    in a subsequent data load.
+    """
+    STAGING_CONCEPTS_TABLE = "staging_medgen_concepts"
+    PRODUCTION_CONCEPTS_TABLE = "medgen_concepts"
+    CONCEPTS_PK = "concept_id"
+    CONCEPTS_BUSINESS_KEY = "aui"
+
+    with PostgresNativeLoader(db_dsn=postgres_db_dsn, autocommit=False) as loader:
+        conn = loader.conn
+        loader._initialize_metadata()
+
+        # --- 1. Initial Load (V1) ---
+        logging.info("--- Running Initial Full Load (V1) ---")
+        loader.initialize_staging(STAGING_CONCEPTS_TABLE, STAGING_CONCEPTS_DDL)
+        v1_byte_iterator = stream_mrconso_tsv(iter(REACTIVATION_V1))
+        loader.bulk_load(STAGING_CONCEPTS_TABLE, v1_byte_iterator)
+        conn.commit()
+
+        loader.apply_changes(
+            mode="full",
+            staging_table=STAGING_CONCEPTS_TABLE,
+            production_table=PRODUCTION_CONCEPTS_TABLE,
+            production_ddl=PRODUCTION_CONCEPTS_DDL,
+            index_ddls=PRODUCTION_CONCEPTS_INDEXES_DDL,
+            pk_name=CONCEPTS_PK,
+        )
+        conn.commit()
+
+        # --- Verification for V1 ---
+        with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+            cur.execute(f"SELECT aui FROM {PRODUCTION_CONCEPTS_TABLE} WHERE is_active = true")
+            results = {r["aui"] for r in cur.fetchall()}
+            assert results == {"A1", "A2"}
+
+        # --- 2. Delta Load (V2) - Soft-delete A1 ---
+        logging.info("--- Running Delta Load (V2) to soft-delete A1 ---")
+        loader.initialize_staging(STAGING_CONCEPTS_TABLE, STAGING_CONCEPTS_DDL)
+        v2_byte_iterator = stream_mrconso_tsv(iter(REACTIVATION_V2))
+        loader.bulk_load(STAGING_CONCEPTS_TABLE, v2_byte_iterator)
+        conn.commit()
+
+        loader.execute_cdc(
+            staging_table=STAGING_CONCEPTS_TABLE,
+            production_table=PRODUCTION_CONCEPTS_TABLE,
+            pk_name=CONCEPTS_PK,
+            business_key=CONCEPTS_BUSINESS_KEY,
+        )
+        loader.apply_changes(
+            mode="delta",
+            staging_table=STAGING_CONCEPTS_TABLE,
+            production_table=PRODUCTION_CONCEPTS_TABLE,
+            production_ddl=PRODUCTION_CONCEPTS_DDL,
+            index_ddls=PRODUCTION_CONCEPTS_INDEXES_DDL,
+            pk_name=CONCEPTS_PK,
+            business_key=CONCEPTS_BUSINESS_KEY,
+        )
+        conn.commit()
+
+        # --- Verification for V2 ---
+        with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+            cur.execute(
+                f"SELECT aui, is_active FROM {PRODUCTION_CONCEPTS_TABLE} ORDER BY aui"
+            )
+            results = {r["aui"]: r["is_active"] for r in cur.fetchall()}
+            assert results["A1"] is False, "A1 should be soft-deleted"
+            assert results["A2"] is True, "A2 should remain active"
+
+        # --- 3. Delta Load (V3) - Reactivate A1 ---
+        logging.info("--- Running Delta Load (V3) to reactivate A1 ---")
+        loader.initialize_staging(STAGING_CONCEPTS_TABLE, STAGING_CONCEPTS_DDL)
+        v3_byte_iterator = stream_mrconso_tsv(iter(REACTIVATION_V3))
+        loader.bulk_load(STAGING_CONCEPTS_TABLE, v3_byte_iterator)
+        conn.commit()
+
+        cdc_metrics = loader.execute_cdc(
+            staging_table=STAGING_CONCEPTS_TABLE,
+            production_table=PRODUCTION_CONCEPTS_TABLE,
+            pk_name=CONCEPTS_PK,
+            business_key=CONCEPTS_BUSINESS_KEY,
+        )
+
+        assert cdc_metrics["updates"] == 1, "Reactivation should be counted as an update"
+        assert cdc_metrics["inserts"] == 0
+        assert cdc_metrics["deletes"] == 0
+
+        loader.apply_changes(
+            mode="delta",
+            staging_table=STAGING_CONCEPTS_TABLE,
+            production_table=PRODUCTION_CONCEPTS_TABLE,
+            production_ddl=PRODUCTION_CONCEPTS_DDL,
+            index_ddls=PRODUCTION_CONCEPTS_INDEXES_DDL,
+            pk_name=CONCEPTS_PK,
+            business_key=CONCEPTS_BUSINESS_KEY,
+        )
+        conn.commit()
+
+        # --- Verification for V3 ---
+        with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+            cur.execute(
+                f"SELECT aui, record_str, is_active "
+                f"FROM {PRODUCTION_CONCEPTS_TABLE} ORDER BY aui"
+            )
+            results = {r["aui"]: (r["record_str"], r["is_active"]) for r in cur.fetchall()}
+            assert results["A1"] == ("Record 1, Version 2", True), "A1 should be reactivated and updated"
+            assert results["A2"] == ("Record 2", True), "A2 should remain active"
