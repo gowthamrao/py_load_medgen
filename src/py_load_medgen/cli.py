@@ -244,9 +244,6 @@ def main():
                 # Prepare source file info for logging
                 source_file_checksums[remote_file] = checksums.get(remote_file)
 
-        # Add release version to the source file metadata
-        source_file_checksums["release_version"] = release_version
-
     except Exception as e:
         logging.error(f"Failed during download phase: {e}", exc_info=True)
         sys.exit(1)
@@ -264,6 +261,7 @@ def main():
                 package_version=pkg_version,
                 load_mode=args.mode,
                 source_files=source_file_checksums,
+                medgen_release_version=release_version,
             )
 
             for config in ETL_CONFIG:

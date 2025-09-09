@@ -122,16 +122,32 @@ class PostgresNativeLoader(AbstractNativeLoader):
         logging.info("Metadata tables initialized.")
 
     def log_run_start(
-        self, run_id: uuid.UUID, package_version: str, load_mode: str, source_files: dict
+        self,
+        run_id: uuid.UUID,
+        package_version: str,
+        load_mode: str,
+        source_files: dict,
+        medgen_release_version: Optional[str] = None,
     ) -> int:
         """Logs the start of an ETL run and returns the log_id."""
         if not self.conn:
             raise ConnectionError("Database connection not established.")
-        sql = "INSERT INTO etl_audit_log (run_id, package_version, load_mode, source_files, start_time, status) VALUES (%s, %s, %s, %s, %s, %s) RETURNING log_id;"
+        sql = "INSERT INTO etl_audit_log (run_id, package_version, load_mode, source_files, medgen_release_version, start_time, status) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING log_id;"
         start_time = datetime.now(timezone.utc)
         source_files_json = psycopg.types.json.Jsonb(source_files)
         with self.conn.cursor() as cur:
-            cur.execute(sql, (run_id, package_version, load_mode, source_files_json, start_time, "In Progress"))
+            cur.execute(
+                sql,
+                (
+                    run_id,
+                    package_version,
+                    load_mode,
+                    source_files_json,
+                    medgen_release_version,
+                    start_time,
+                    "In Progress",
+                ),
+            )
             log_id = cur.fetchone()[0]
             self._commit()
         logging.info(f"ETL run started. Log ID: {log_id}")

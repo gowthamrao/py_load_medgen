@@ -128,6 +128,7 @@ def test_metadata_logging(postgres_db_dsn):
     Tests metadata logging using a testcontainers database.
     """
     run_id = uuid.uuid4()
+    release_version = "Test Release 2025-09-07"
 
     # The 'with' statement ensures loader.connect() is called, which creates metadata tables.
     with PostgresNativeLoader(db_dsn=postgres_db_dsn, autocommit=True) as loader:
@@ -137,14 +138,19 @@ def test_metadata_logging(postgres_db_dsn):
             package_version="0.1.0-test",
             load_mode="full",
             source_files={"MRCONSO.RRF": "d41d8cd98f00b204e9800998ecf8427e"},
+            medgen_release_version=release_version,
         )
         assert log_id is not None
 
         with loader.conn.cursor() as cur:
-            cur.execute("SELECT status, package_version FROM etl_audit_log WHERE log_id = %s", (log_id,))
+            cur.execute(
+                "SELECT status, package_version, medgen_release_version FROM etl_audit_log WHERE log_id = %s",
+                (log_id,),
+            )
             record = cur.fetchone()
             assert record[0] == "In Progress"
             assert record[1] == "0.1.0-test"
+            assert record[2] == release_version
 
         # 2. Test log_run_finish
         loader.log_run_finish(
