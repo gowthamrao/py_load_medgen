@@ -105,19 +105,26 @@ class PostgresNativeLoader(AbstractNativeLoader):
         self._commit()
         logging.info(f"Staging table {table_name} initialized successfully.")
 
-    def bulk_load(self, table_name: str, data_iterator: Iterator[bytes]) -> None:
-        """Executes a native, high-performance bulk load operation using COPY."""
+    def bulk_load(self, table_name: str, data_iterator: Iterator[bytes]) -> int:
+        """
+        Executes a native, high-performance bulk load operation using COPY.
+        Returns:
+            The number of rows loaded into the staging table.
+        """
         if not self.conn:
             raise ConnectionError("Database connection not established.")
         logging.info(f"Starting bulk load into '{table_name}'...")
+        rowcount = 0
         with self.conn.cursor() as cur:
             with cur.copy(
                 f"COPY {table_name} FROM STDIN WITH (FORMAT TEXT, NULL '\\N')"
             ) as copy:
                 for line in data_iterator:
                     copy.write(line)
+            rowcount = cur.rowcount
         self._commit()
-        logging.info(f"Bulk load into '{table_name}' complete.")
+        logging.info(f"Bulk load into '{table_name}' complete. Loaded {rowcount} rows.")
+        return rowcount
 
     def _initialize_metadata(self) -> None:
         """Ensures the ETL audit log tables exist."""
@@ -378,10 +385,14 @@ class PostgresNativeLoader(AbstractNativeLoader):
         pk_name: str,
         business_key: Optional[str] = None,
         full_load_select_sql: Optional[str] = None,
-    ) -> None:
-        """Applies changes to the production table based on the load mode."""
+    ) -> dict[str, int]:
+        """
+        Applies changes to the production table based on the load mode.
+        Returns:
+            A dictionary with the counts of inserted, updated, and deleted records.
+        """
         if mode == "full":
-            self._apply_full_load(
+            return self._apply_full_load(
                 staging_table,
                 production_table,
                 production_ddl,
@@ -390,7 +401,7 @@ class PostgresNativeLoader(AbstractNativeLoader):
         elif mode == "delta":
             if not business_key:
                 raise ValueError("A 'business_key' is required for delta loads.")
-            self._apply_delta_load(
+            return self._apply_delta_load(
                 production_table, pk_name, business_key, production_ddl, index_ddls
             )
         else:
@@ -402,13 +413,19 @@ class PostgresNativeLoader(AbstractNativeLoader):
         production_table: str,
         production_ddl: str,
         full_load_select_sql: Optional[str] = None,
-    ) -> None:
-        """Applies changes atomically using the 'atomic swap' method for a full load."""
+    ) -> dict[str, int]:
+        """
+        Applies changes atomically using the 'atomic swap' method for a full load.
+        Returns:
+            A dictionary with the count of inserted records.
+        """
         if not self.conn:
             raise ConnectionError("Database connection not established.")
         new_production_table = f"{production_table}_new"
         backup_table = f"{production_table}_old"
         index_ddls = self._get_table_indexes(production_table)
+        inserted_count = 0
+
         logging.info(
             f"Applying FULL load for table {production_table} with atomic swap..."
         )
@@ -416,7 +433,6 @@ class PostgresNativeLoader(AbstractNativeLoader):
             cur.execute(production_ddl.format(table_name=new_production_table))
 
             if full_load_select_sql:
-                # Use custom SQL for loading data from staging to production
                 insert_sql = full_load_select_sql.format(
                     new_production_table=new_production_table,
                     staging_table=staging_table,
@@ -425,15 +441,15 @@ class PostgresNativeLoader(AbstractNativeLoader):
                     f"Loading data into '{new_production_table}' using custom SQL..."
                 )
                 cur.execute(insert_sql)
+                inserted_count = cur.rowcount
             else:
-                # Use generic SELECT * for tables with matching schemas
                 cur.execute(
                     "SELECT column_name FROM information_schema.columns "
                     "WHERE table_name = %s ORDER BY ordinal_position;",
                     (staging_table,),
                 )
                 columns = [row[0] for row in cur.fetchall()]
-                column_list_str = ", ".join(columns)
+                column_list_str = ", ".join(f'"{col}"' for col in columns)
                 logging.info(
                     f"Loading data from '{staging_table}' into '{new_production_table}'"
                 )
@@ -441,6 +457,7 @@ class PostgresNativeLoader(AbstractNativeLoader):
                     f"INSERT INTO {new_production_table} ({column_list_str}) "
                     f"SELECT {column_list_str} FROM {staging_table};"
                 )
+                inserted_count = cur.rowcount
 
             logging.info(
                 f"Replicating {len(index_ddls)} indexes on "
@@ -454,6 +471,7 @@ class PostgresNativeLoader(AbstractNativeLoader):
                     else index_ddl.replace(production_table, new_production_table)
                 )
                 cur.execute(replicated_ddl)
+
             logging.info("Performing atomic swap in a single transaction...")
             with self.conn.transaction():
                 cur.execute(f"DROP TABLE IF EXISTS {backup_table} CASCADE;")
@@ -464,10 +482,12 @@ class PostgresNativeLoader(AbstractNativeLoader):
                 cur.execute(
                     f"ALTER TABLE {new_production_table} RENAME TO {production_table};"
                 )
+
         logging.info(
             f"Atomic swap complete for {production_table}. "
-            "Production data is updated."
+            f"Inserted {inserted_count} records."
         )
+        return {"inserted": inserted_count, "updated": 0, "deleted": 0}
 
     def _apply_delta_load(
         self,
@@ -476,11 +496,18 @@ class PostgresNativeLoader(AbstractNativeLoader):
         business_key: str,
         production_ddl: str,
         index_ddls: list[str],
-    ) -> None:
-        """Applies inserts, updates, and soft deletes for a delta load."""
+    ) -> dict[str, int]:
+        """
+        Applies inserts, updates, and soft deletes for a delta load.
+        Returns:
+            A dictionary with the counts of inserted, updated, and deleted records.
+        """
         if not self.conn:
             raise ConnectionError("Database connection not established.")
+
+        metrics = {"inserted": 0, "updated": 0, "deleted": 0}
         logging.info(f"Applying DELTA load for table {production_table}...")
+
         with self.conn.cursor() as cur:
             # Ensure production table and indexes exist
             cur.execute("SELECT to_regclass(%s)", (production_table,))
@@ -494,8 +521,6 @@ class PostgresNativeLoader(AbstractNativeLoader):
                     cur.execute(index_ddl.format(table_name=production_table))
                 logging.info(f"Table '{production_table}' and its indexes created.")
 
-            # --- Get columns for the UPDATE statement ---
-            # Exclude PK and business key columns from the SET clause
             business_key_cols = {key.strip() for key in business_key.split(",")}
             cur.execute(
                 "SELECT column_name FROM information_schema.columns "
@@ -506,9 +531,6 @@ class PostgresNativeLoader(AbstractNativeLoader):
             update_columns = [
                 row[0] for row in cur.fetchall() if row[0] not in business_key_cols
             ]
-
-            # --- Get columns for the INSERT statement ---
-            # Exclude only the PK for inserts
             cur.execute(
                 "SELECT column_name FROM information_schema.columns "
                 "WHERE table_name = 'cdc_inserts' AND column_name != %s "
@@ -525,18 +547,17 @@ class PostgresNativeLoader(AbstractNativeLoader):
                         [f'"{col}" = s."{col}"' for col in update_columns]
                     )
                     set_clause += ", last_updated_at = NOW()"
-
                     keys = [key.strip() for key in business_key.split(",")]
                     join_condition = " AND ".join(
                         [f'p."{key}" = s."{key}"' for key in keys]
                     )
-
                     sql_update = (
                         f"UPDATE {production_table} p SET {set_clause} "
                         f"FROM cdc_updates s WHERE {join_condition};"
                     )
                     cur.execute(sql_update)
-                    logging.info(f"Applied {cur.rowcount} updates.")
+                    metrics["updated"] = cur.rowcount
+                    logging.info(f"Applied {metrics['updated']} updates.")
 
                 # 2. Apply Deletes
                 sql_delete = (
@@ -545,7 +566,8 @@ class PostgresNativeLoader(AbstractNativeLoader):
                     f"IN (SELECT id FROM cdc_deletes);"
                 )
                 cur.execute(sql_delete)
-                logging.info(f"Applied {cur.rowcount} soft deletes.")
+                metrics["deleted"] = cur.rowcount
+                logging.info(f"Applied {metrics['deleted']} soft deletes.")
 
                 # 3. Apply Inserts
                 if insert_columns:
@@ -554,9 +576,11 @@ class PostgresNativeLoader(AbstractNativeLoader):
                         f"SELECT {insert_column_list_str} FROM cdc_inserts;"
                     )
                     cur.execute(sql_insert)
-                    logging.info(f"Applied {cur.rowcount} inserts.")
+                    metrics["inserted"] = cur.rowcount
+                    logging.info(f"Applied {metrics['inserted']} inserts.")
 
         logging.info(f"Delta load for {production_table} complete.")
+        return metrics
 
     def cleanup(self, staging_table: str, production_table: str) -> None:
         """Performs cleanup operations by dropping old backup and staging tables."""
