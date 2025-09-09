@@ -295,8 +295,10 @@ class PostgresNativeLoader(AbstractNativeLoader):
                 delete_count = cur.rowcount
 
                 # --- Find Updates ---
-                # Compare a hash of all columns to detect changes in existing
-                # records. Using MD5 is a common and effective strategy for this.
+                # An update is a record that exists in both staging and prod, AND:
+                # 1. The record is active and the content has changed.
+                # OR
+                # 2. The record was previously inactive (a "reactivation").
                 hash_comparison = (
                     f"MD5(ROW({column_list_str})::TEXT) != "
                     f"MD5(ROW({column_list_str.replace('s.', 'p.')})::TEXT)"
@@ -304,7 +306,8 @@ class PostgresNativeLoader(AbstractNativeLoader):
                 sql_find_updates = (
                     f"INSERT INTO cdc_updates SELECT s.* FROM {staging_table} s "
                     f"JOIN {production_table} p ON {join_condition} "
-                    f"WHERE p.is_active = true AND {hash_comparison};"
+                    f"WHERE (p.is_active = true AND {hash_comparison}) "
+                    f"OR p.is_active = false;"
                 )
                 cur.execute(sql_find_updates)
                 update_count = cur.rowcount
@@ -546,7 +549,9 @@ class PostgresNativeLoader(AbstractNativeLoader):
                     set_clause = ", ".join(
                         [f'"{col}" = s."{col}"' for col in update_columns]
                     )
-                    set_clause += ", last_updated_at = NOW()"
+                    # When updating a record, always mark it as active. This handles
+                    # both normal updates and "reactivations" of soft-deleted records.
+                    set_clause += ", last_updated_at = NOW(), is_active = true"
                     keys = [key.strip() for key in business_key.split(",")]
                     join_condition = " AND ".join(
                         [f'p."{key}" = s."{key}"' for key in keys]
