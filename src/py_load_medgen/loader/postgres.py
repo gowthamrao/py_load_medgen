@@ -194,24 +194,51 @@ class PostgresNativeLoader(AbstractNativeLoader):
             # Ensure temp tables exist and are empty for this run.
             cur.execute("CREATE TEMP TABLE IF NOT EXISTS cdc_deletes (id BIGINT) ON COMMIT PRESERVE ROWS;")
             cur.execute(f"CREATE TEMP TABLE IF NOT EXISTS cdc_inserts (LIKE {staging_table} INCLUDING DEFAULTS) ON COMMIT PRESERVE ROWS;")
-            cur.execute("TRUNCATE TABLE cdc_deletes, cdc_inserts;")
+            cur.execute(f"CREATE TEMP TABLE IF NOT EXISTS cdc_updates (LIKE {staging_table} INCLUDING DEFAULTS) ON COMMIT PRESERVE ROWS;")
+            cur.execute("TRUNCATE TABLE cdc_deletes, cdc_inserts, cdc_updates;")
 
             cur.execute("SELECT to_regclass(%s)", (production_table,))
             table_exists = cur.fetchone()[0]
 
             delete_count = 0
+            update_count = 0
             if table_exists:
+                # Get the column names from the staging table to build a hash for comparison
+                # Exclude the raw_record column as it may contain subtle differences that don't warrant an update.
+                cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = %s AND column_name != 'raw_record' ORDER BY ordinal_position;", (staging_table,))
+                columns_to_hash = [row[0] for row in cur.fetchall()]
+                column_list_str = ", ".join([f's."{col}"' for col in columns_to_hash])
+
                 # Construct the JOIN condition for one or more business keys
                 keys = [key.strip() for key in business_key.split(',')]
                 join_condition = " AND ".join([f"p.{key} = s.{key}" for key in keys])
-                where_condition = " AND ".join([f"s.{key} IS NULL" for key in keys])
 
-                sql_find_deletes = f"INSERT INTO cdc_deletes (id) SELECT p.{pk_name} FROM {production_table} p LEFT JOIN {staging_table} s ON {join_condition} WHERE {where_condition} AND p.is_active = true;"
+                # --- Find Deletes ---
+                where_condition_deletes = " AND ".join([f"s.{key} IS NULL" for key in keys])
+                sql_find_deletes = f"INSERT INTO cdc_deletes (id) SELECT p.{pk_name} FROM {production_table} p LEFT JOIN {staging_table} s ON {join_condition} WHERE {where_condition_deletes} AND p.is_active = true;"
                 cur.execute(sql_find_deletes)
                 delete_count = cur.rowcount
 
-                # For inserts, the join condition is the same, but the where clause checks for null on the production side's PK
-                sql_find_inserts = f"INSERT INTO cdc_inserts SELECT s.* FROM {staging_table} s LEFT JOIN {production_table} p ON {join_condition} AND p.is_active = true WHERE p.{pk_name} IS NULL;"
+                # --- Find Updates ---
+                # Compare a hash of all columns to detect changes in existing records.
+                # Using MD5 is a common and effective strategy for this.
+                hash_comparison = f"MD5(ROW({column_list_str})::TEXT) != MD5(ROW({column_list_str.replace('s.', 'p.')})::TEXT)"
+                sql_find_updates = f"INSERT INTO cdc_updates SELECT s.* FROM {staging_table} s JOIN {production_table} p ON {join_condition} WHERE p.is_active = true AND {hash_comparison};"
+                cur.execute(sql_find_updates)
+                update_count = cur.rowcount
+
+                # --- Find Inserts ---
+                # Inserts are records in staging that are not in production (by business key).
+                # We also need to exclude records that were identified as updates.
+                update_join_condition = " AND ".join([f"s.{key} = u.{key}" for key in keys])
+                sql_find_inserts = f"""
+                    INSERT INTO cdc_inserts
+                    SELECT s.*
+                    FROM {staging_table} s
+                    LEFT JOIN {production_table} p ON {join_condition}
+                    LEFT JOIN cdc_updates u ON {update_join_condition}
+                    WHERE p.{pk_name} IS NULL AND u.{business_key.split(',')[0]} IS NULL;
+                """
                 cur.execute(sql_find_inserts)
                 insert_count = cur.rowcount
             else:
@@ -221,8 +248,8 @@ class PostgresNativeLoader(AbstractNativeLoader):
                 cur.execute(sql_find_inserts)
                 insert_count = cur.rowcount
 
-        logging.info(f"CDC complete. Inserts: {insert_count}, Deletes: {delete_count}")
-        return {"inserts": insert_count, "deletes": delete_count}
+        logging.info(f"CDC complete. Inserts: {insert_count}, Updates: {update_count}, Deletes: {delete_count}")
+        return {"inserts": insert_count, "updates": update_count, "deletes": delete_count}
 
     def _get_table_indexes(self, table_name: str) -> list[str]:
         """Retrieves the DDL for all non-primary-key indexes on a given table."""
@@ -257,7 +284,7 @@ class PostgresNativeLoader(AbstractNativeLoader):
         elif mode == "delta":
             if not business_key:
                 raise ValueError("A 'business_key' is required for delta loads.")
-            self._apply_delta_load(production_table, pk_name, production_ddl, index_ddls)
+            self._apply_delta_load(production_table, pk_name, business_key, production_ddl, index_ddls)
         else:
             raise ValueError(f"Unknown load mode: {mode}")
 
@@ -303,9 +330,9 @@ class PostgresNativeLoader(AbstractNativeLoader):
         logging.info(f"Atomic swap complete for {production_table}. Production data is updated.")
 
     def _apply_delta_load(
-        self, production_table: str, pk_name: str, production_ddl: str, index_ddls: list[str]
+        self, production_table: str, pk_name: str, business_key: str, production_ddl: str, index_ddls: list[str]
     ) -> None:
-        """Applies inserts and soft deletes for a delta load, creating the table if it doesn't exist."""
+        """Applies inserts, updates, and soft deletes for a delta load."""
         if not self.conn:
             raise ConnectionError("Database connection not established.")
         logging.info(f"Applying DELTA load for table {production_table}...")
@@ -319,16 +346,42 @@ class PostgresNativeLoader(AbstractNativeLoader):
                     cur.execute(index_ddl.format(table_name=production_table))
                 logging.info(f"Table '{production_table}' and its indexes created.")
 
-            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'cdc_inserts' ORDER BY ordinal_position;")
-            columns = [row[0] for row in cur.fetchall()]
-            column_list_str = ", ".join(columns)
+            # --- Get columns for the UPDATE statement ---
+            # Exclude PK and business key columns from the SET clause
+            business_key_cols = {key.strip() for key in business_key.split(',')}
+            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'cdc_updates' AND column_name != %s ORDER BY ordinal_position;", (pk_name,))
+            update_columns = [row[0] for row in cur.fetchall() if row[0] not in business_key_cols]
+
+            # --- Get columns for the INSERT statement ---
+            # Exclude only the PK for inserts
+            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'cdc_inserts' AND column_name != %s ORDER BY ordinal_position;", (pk_name,))
+            insert_columns = [row[0] for row in cur.fetchall()]
+            insert_column_list_str = ", ".join(f'"{col}"' for col in insert_columns)
+
             with self.conn.transaction():
+                # 1. Apply Updates
+                if update_columns:
+                    set_clause = ", ".join([f'"{col}" = s."{col}"' for col in update_columns])
+                    set_clause += ", last_updated_at = NOW()"
+
+                    keys = [key.strip() for key in business_key.split(',')]
+                    join_condition = " AND ".join([f'p."{key}" = s."{key}"' for key in keys])
+
+                    sql_update = f"UPDATE {production_table} p SET {set_clause} FROM cdc_updates s WHERE {join_condition};"
+                    cur.execute(sql_update)
+                    logging.info(f"Applied {cur.rowcount} updates.")
+
+                # 2. Apply Deletes
                 sql_delete = f"UPDATE {production_table} SET is_active = false, last_updated_at = NOW() WHERE {pk_name} IN (SELECT id FROM cdc_deletes);"
                 cur.execute(sql_delete)
                 logging.info(f"Applied {cur.rowcount} soft deletes.")
-                sql_insert = f"INSERT INTO {production_table} ({column_list_str}) SELECT {column_list_str} FROM cdc_inserts;"
-                cur.execute(sql_insert)
-                logging.info(f"Applied {cur.rowcount} inserts.")
+
+                # 3. Apply Inserts
+                if insert_columns:
+                    sql_insert = f"INSERT INTO {production_table} ({insert_column_list_str}) SELECT {insert_column_list_str} FROM cdc_inserts;"
+                    cur.execute(sql_insert)
+                    logging.info(f"Applied {cur.rowcount} inserts.")
+
         logging.info(f"Delta load for {production_table} complete.")
 
     def cleanup(self, staging_table: str, production_table: str) -> None:
@@ -341,5 +394,5 @@ class PostgresNativeLoader(AbstractNativeLoader):
             with self.conn.transaction():
                 cur.execute(f"DROP TABLE IF EXISTS {backup_table} CASCADE;")
                 cur.execute(f"DROP TABLE IF EXISTS {staging_table} CASCADE;")
-                cur.execute("DROP TABLE IF EXISTS cdc_deletes; DROP TABLE IF EXISTS cdc_inserts;")
-        logging.info(f"Cleanup complete. Dropped tables: {backup_table}, {staging_table}, cdc_deletes, cdc_inserts")
+                cur.execute("DROP TABLE IF EXISTS cdc_deletes; DROP TABLE IF EXISTS cdc_inserts; DROP TABLE IF EXISTS cdc_updates;")
+        logging.info(f"Cleanup complete. Dropped tables: {backup_table}, {staging_table}, cdc_deletes, cdc_inserts, cdc_updates")
