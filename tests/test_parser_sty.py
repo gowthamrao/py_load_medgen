@@ -1,7 +1,8 @@
 import io
+
 import pytest
 
-from py_load_medgen.parser import parse_mrsty, MrstyRecord
+from py_load_medgen.parser import MrstyRecord, parse_mrsty
 
 
 def test_parse_mrsty_valid_record():

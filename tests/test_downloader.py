@@ -49,7 +49,9 @@ def test_downloader_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     assert local_filepath.read_text() == "dummy-data"
 
 
-def test_downloader_checksum_verification(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_downloader_checksum_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """
     Tests that the downloader correctly verifies file integrity using checksums.
     """
@@ -60,7 +62,9 @@ def test_downloader_checksum_verification(tmp_path: Path, monkeypatch: pytest.Mo
     def fake_retrlines(command, callback):
         # The command should be 'RETR md5sum.txt'
         if "md5sum.txt" in command:
-            callback("2a9d9c136c327402524c75a3e3696b4a  dummy_file.txt") # checksum for 'correct-data'
+            callback(
+                "2a9d9c136c327402524c75a3e3696b4a  dummy_file.txt"
+            )  # checksum for 'correct-data'
             callback("badc0d3e  other_file.txt")
 
     mock_ftp_instance.retrlines.side_effect = fake_retrlines
@@ -155,7 +159,9 @@ def test_get_release_version(monkeypatch: pytest.MonkeyPatch) -> None:
     assert version == "Unknown"
 
 
-def test_downloader_resume_download(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_downloader_resume_download(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """
     Tests that the downloader correctly resumes a partially downloaded file.
     """

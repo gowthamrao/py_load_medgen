@@ -79,9 +79,16 @@ class AbstractNativeLoader(ABC):
 
     @abstractmethod
     def log_run_start(
-        self, run_id: uuid.UUID, package_version: str, load_mode: str, source_files: dict
+        self,
+        run_id: uuid.UUID,
+        package_version: str,
+        load_mode: str,
+        source_files: dict,
     ) -> int:
-        """Logs the start of an ETL run and returns a unique identifier for the run log."""
+        """
+        Logs the start of an ETL run and returns a unique identifier for the
+        run log.
+        """
         raise NotImplementedError
 
     @abstractmethod

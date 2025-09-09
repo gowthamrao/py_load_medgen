@@ -29,9 +29,12 @@ from py_load_medgen.sql.ddl import (
 
 # Sample MRCONSO.RRF data for testing.
 SAMPLE_MRCONSO_DATA = """\
-C0001175|ENG|P|L0001175|VO|S0010340|Y|A0019182||M0000245|D000163|MSH|PM|D000163|Acquired Immunodeficiency Syndromes|0|N||
-C0001175|ENG|S|L0001842|PF|S0011877|N|A2878223|103840012|62479008||SNOMEDCT_US|PT|62479008|AIDS|9|N|2304|
-C0001175|FRE|S|L0162173|PF|S0226654|Y|A27478989||M0000245|D000163|MSHFRE|ET|D000163|SIDA|3|N||
+C0001175|ENG|P|L0001175|VO|S0010340|Y|A0019182||M0000245|D000163|MSH|PM|D000163|\
+Acquired Immunodeficiency Syndromes|0|N||
+C0001175|ENG|S|L0001842|PF|S0011877|N|A2878223|103840012|62479008||\
+SNOMEDCT_US|PT|62479008|AIDS|9|N|2304|
+C0001175|FRE|S|L0162173|PF|S0226654|Y|A27478989||M0000245|D000163|MSHFRE|ET|\
+D000163|SIDA|3|N||
 """
 
 STAGING_TABLE = "test_staging_concepts"
@@ -64,7 +67,10 @@ def test_staging_load_with_raw_record(postgres_db_dsn):
     Tests loading data into a staging table using testcontainers.
     """
     with PostgresNativeLoader(db_dsn=postgres_db_dsn, autocommit=False) as loader:
-        loader.initialize_staging(STAGING_TABLE, STAGING_CONCEPTS_DDL.replace("staging_medgen_concepts", STAGING_TABLE))
+        loader.initialize_staging(
+            STAGING_TABLE,
+            STAGING_CONCEPTS_DDL.replace("staging_medgen_concepts", STAGING_TABLE),
+        )
         file_stream = io.StringIO(SAMPLE_MRCONSO_DATA)
         records_iterator = parse_mrconso(file_stream, max_errors=10)
         byte_iterator = stream_mrconso_tsv(records_iterator)
@@ -86,7 +92,10 @@ def test_full_load_atomic_swap_with_raw_record(postgres_db_dsn):
     backup_table = f"{PRODUCTION_TABLE}_old"
 
     with PostgresNativeLoader(db_dsn=postgres_db_dsn, autocommit=False) as loader:
-        loader.initialize_staging(STAGING_TABLE, STAGING_CONCEPTS_DDL.replace("staging_medgen_concepts", STAGING_TABLE))
+        loader.initialize_staging(
+            STAGING_TABLE,
+            STAGING_CONCEPTS_DDL.replace("staging_medgen_concepts", STAGING_TABLE),
+        )
         file_stream = io.StringIO(SAMPLE_MRCONSO_DATA)
         records_iterator = parse_mrconso(file_stream, max_errors=10)
         byte_iterator = stream_mrconso_tsv(records_iterator)
@@ -105,7 +114,10 @@ def test_full_load_atomic_swap_with_raw_record(postgres_db_dsn):
     with psycopg.connect(postgres_db_dsn) as conn, conn.cursor() as cur:
         cur.execute(f"SELECT COUNT(*) FROM {PRODUCTION_TABLE}")
         assert cur.fetchone()[0] == 3
-        cur.execute(f"SELECT cui, record_str, raw_record FROM {PRODUCTION_TABLE} WHERE aui = 'A0019182'")
+        cur.execute(
+            f"SELECT cui, record_str, raw_record FROM {PRODUCTION_TABLE} "
+            f"WHERE aui = 'A0019182'"
+        )
         record = cur.fetchone()
         assert record[0] == "C0001175"
         assert record[1] == "Acquired Immunodeficiency Syndromes"
@@ -113,7 +125,8 @@ def test_full_load_atomic_swap_with_raw_record(postgres_db_dsn):
 
         def table_exists(cursor, table_name):
             cursor.execute(
-                "SELECT EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = %s)",
+                "SELECT EXISTS (SELECT FROM pg_tables "
+                "WHERE schemaname = 'public' AND tablename = %s)",
                 (table_name,),
             )
             return cursor.fetchone()[0]
@@ -130,7 +143,8 @@ def test_metadata_logging(postgres_db_dsn):
     run_id = uuid.uuid4()
     release_version = "Test Release 2025-09-07"
 
-    # The 'with' statement ensures loader.connect() is called, which creates metadata tables.
+    # The 'with' statement ensures loader.connect() is called, which creates
+    # metadata tables.
     with PostgresNativeLoader(db_dsn=postgres_db_dsn, autocommit=True) as loader:
         # 1. Test log_run_start
         log_id = loader.log_run_start(
@@ -144,7 +158,8 @@ def test_metadata_logging(postgres_db_dsn):
 
         with loader.conn.cursor() as cur:
             cur.execute(
-                "SELECT status, package_version, medgen_release_version FROM etl_audit_log WHERE log_id = %s",
+                "SELECT status, package_version, medgen_release_version "
+                "FROM etl_audit_log WHERE log_id = %s",
                 (log_id,),
             )
             record = cur.fetchone()
@@ -162,7 +177,8 @@ def test_metadata_logging(postgres_db_dsn):
 
         with loader.conn.cursor() as cur:
             cur.execute(
-                "SELECT status, records_extracted, records_loaded, error_message FROM etl_audit_log WHERE log_id = %s",
+                "SELECT status, records_extracted, records_loaded, error_message "
+                "FROM etl_audit_log WHERE log_id = %s",
                 (log_id,),
             )
             record = cur.fetchone()
@@ -192,7 +208,9 @@ C0000097|T121|B4|Pharmacologic Substance|||
         # Initialize staging
         loader.initialize_staging(
             staging_table,
-            STAGING_SEMANTIC_TYPES_DDL.replace("staging_medgen_semantic_types", staging_table)
+            STAGING_SEMANTIC_TYPES_DDL.replace(
+                "staging_medgen_semantic_types", staging_table
+            ),
         )
 
         # Parse and bulk load
@@ -208,7 +226,8 @@ C0000097|T121|B4|Pharmacologic Substance|||
             production_table=production_table,
             production_ddl=PRODUCTION_SEMANTIC_TYPES_DDL,
             index_ddls=PRODUCTION_SEMANTIC_TYPES_INDEXES_DDL,
-            pk_name="semantic_type_id" # pk_name is not used for full load, but required by signature
+            pk_name="semantic_type_id",
+            # pk_name is not used for full load, but required by signature
         )
 
         # Clean up
@@ -221,7 +240,9 @@ C0000097|T121|B4|Pharmacologic Substance|||
         cur.execute(f"SELECT COUNT(*) FROM {production_table}")
         assert cur.fetchone()[0] == 3
 
-        cur.execute(f"SELECT cui, sty, atui, cvf FROM {production_table} WHERE tui = 'T033'")
+        cur.execute(
+            f"SELECT cui, sty, atui, cvf FROM {production_table} WHERE tui = 'T033'"
+        )
         record = cur.fetchone()
         assert record[0] == "C0000074"
         assert record[1] == "Finding"
@@ -231,7 +252,8 @@ C0000097|T121|B4|Pharmacologic Substance|||
         # Check that staging and backup tables are gone
         def table_exists(cursor, table_name):
             cursor.execute(
-                "SELECT EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = %s)",
+                "SELECT EXISTS (SELECT FROM pg_tables "
+                "WHERE schemaname = 'public' AND tablename = %s)",
                 (table_name,),
             )
             return cursor.fetchone()[0]
@@ -249,20 +271,27 @@ def test_delta_load_with_detailed_logging(postgres_db_dsn):
     # 1. Arrange: Define initial and new data states
     # V1: 1 record to be kept, 1 to be deleted
     v1_data = """\
-C0001175|ENG|P|L0001175|VO|S0010340|Y|A0019182||M0000245|D000163|MSH|PM|D000163|Acquired Immunodeficiency Syndromes|0|N||
-C9999999|ENG|P|L9999999|VO|S9999999|Y|A9999999||M9999999|D9999999|MSH|PM|D9999999|Record To Be Deleted|0|N||
+C0001175|ENG|P|L0001175|VO|S0010340|Y|A0019182||M0000245|D000163|MSH|PM|D000163|\
+Acquired Immunodeficiency Syndromes|0|N||
+C9999999|ENG|P|L9999999|VO|S9999999|Y|A9999999||M9999999|D9999999|MSH|PM|D9999999|\
+Record To Be Deleted|0|N||
 """
     # V2: The kept record, plus 1 new record
     v2_data = """\
-C0001175|ENG|P|L0001175|VO|S0010340|Y|A0019182||M0000245|D000163|MSH|PM|D000163|Acquired Immunodeficiency Syndromes|0|N||
-C0001290|FRE|S|L0162173|PF|S0226654|Y|A27478989||M0000245|D000163|MSHFRE|ET|D000163|SIDA|3|N||
+C0001175|ENG|P|L0001175|VO|S0010340|Y|A0019182||M0000245|D000163|MSH|PM|D000163|\
+Acquired Immunodeficiency Syndromes|0|N||
+C0001290|FRE|S|L0162173|PF|S0226654|Y|A27478989||M0000245|D000163|MSHFRE|ET|\
+D000163|SIDA|3|N||
 """
     run_id = uuid.uuid4()
 
     # 2. Act: Setup initial state (V1) and run delta load (V2)
     with PostgresNativeLoader(db_dsn=postgres_db_dsn, autocommit=False) as loader:
         # Setup initial state (V1)
-        loader.initialize_staging(STAGING_TABLE, STAGING_CONCEPTS_DDL.replace("staging_medgen_concepts", STAGING_TABLE))
+        loader.initialize_staging(
+            STAGING_TABLE,
+            STAGING_CONCEPTS_DDL.replace("staging_medgen_concepts", STAGING_TABLE),
+        )
         records_v1 = parse_mrconso(io.StringIO(v1_data), max_errors=10)
         loader.bulk_load(STAGING_TABLE, stream_mrconso_tsv(records_v1))
         loader.apply_changes(
@@ -278,7 +307,10 @@ C0001290|FRE|S|L0162173|PF|S0226654|Y|A27478989||M0000245|D000163|MSHFRE|ET|D000
         # Run the delta load process (V2)
         log_id = loader.log_run_start(run_id, "test", "delta", {})
 
-        loader.initialize_staging(STAGING_TABLE, STAGING_CONCEPTS_DDL.replace("staging_medgen_concepts", STAGING_TABLE))
+        loader.initialize_staging(
+            STAGING_TABLE,
+            STAGING_CONCEPTS_DDL.replace("staging_medgen_concepts", STAGING_TABLE),
+        )
         records_v2 = parse_mrconso(io.StringIO(v2_data), max_errors=10)
         loader.bulk_load(STAGING_TABLE, stream_mrconso_tsv(records_v2))
 
@@ -314,16 +346,28 @@ C0001290|FRE|S|L0162173|PF|S0226654|Y|A27478989||M0000245|D000163|MSHFRE|ET|D000
         assert cur.fetchone()[0] == 2  # 1 kept, 1 new
         cur.execute(f"SELECT COUNT(*) FROM {PRODUCTION_TABLE} WHERE is_active = false")
         assert cur.fetchone()[0] == 1  # 1 deleted
-        cur.execute(f"SELECT cui FROM {PRODUCTION_TABLE} WHERE aui = 'A9999999' AND is_active = false")
-        assert cur.fetchone()[0] == "C9999999"  # Verify the correct record was soft-deleted
-        cur.execute(f"SELECT cui FROM {PRODUCTION_TABLE} WHERE aui = 'A27478989' AND is_active = true")
+        cur.execute(
+            f"SELECT cui FROM {PRODUCTION_TABLE} "
+            "WHERE aui = 'A9999999' AND is_active = false"
+        )
+        assert (
+            cur.fetchone()[0] == "C9999999"
+        )  # Verify the correct record was soft-deleted
+        cur.execute(
+            f"SELECT cui FROM {PRODUCTION_TABLE} "
+            "WHERE aui = 'A27478989' AND is_active = true"
+        )
         assert cur.fetchone()[0] == "C0001290"  # Verify the new record was inserted
 
         # Assert detailed logging correctness
         cur.execute("SELECT log_id FROM etl_audit_log WHERE run_id = %s", (run_id,))
         log_id_from_db = cur.fetchone()[0]
 
-        cur.execute("SELECT records_inserted, records_deleted FROM etl_run_details WHERE log_id = %s AND table_name = %s", (log_id_from_db, PRODUCTION_TABLE))
+        cur.execute(
+            "SELECT records_inserted, records_deleted FROM etl_run_details "
+            "WHERE log_id = %s AND table_name = %s",
+            (log_id_from_db, PRODUCTION_TABLE),
+        )
         detail_record = cur.fetchone()
         assert detail_record is not None
         assert detail_record[0] == 1  # 1 insert
@@ -358,7 +402,9 @@ def test_full_load_hpo_mapping(postgres_db_dsn, tmp_path: Path):
     with PostgresNativeLoader(db_dsn=postgres_db_dsn, autocommit=False) as loader:
         loader.initialize_staging(
             staging_table,
-            STAGING_MEDGEN_HPO_MAPPING_DDL.replace("staging_medgen_hpo_mapping", staging_table),
+            STAGING_MEDGEN_HPO_MAPPING_DDL.replace(
+                "staging_medgen_hpo_mapping", staging_table
+            ),
         )
 
         records_iterator = parse_hpo_mapping(hpo_file, max_errors=10)
@@ -383,7 +429,10 @@ def test_full_load_hpo_mapping(postgres_db_dsn, tmp_path: Path):
         cur.execute(f"SELECT COUNT(*) FROM {production_table}")
         assert cur.fetchone()[0] == 3
 
-        cur.execute(f"SELECT cui, hpo_str, medgen_str, sty FROM {production_table} WHERE sdui = 'HP:0000001'")
+        cur.execute(
+            f"SELECT cui, hpo_str, medgen_str, sty FROM {production_table} "
+            f"WHERE sdui = 'HP:0000001'"
+        )
         record = cur.fetchone()
         assert record[0] == "C0001175"
         assert record[1] == "AIDS"
@@ -392,7 +441,8 @@ def test_full_load_hpo_mapping(postgres_db_dsn, tmp_path: Path):
 
         def table_exists(cursor, table_name):
             cursor.execute(
-                "SELECT EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = %s)",
+                "SELECT EXISTS (SELECT FROM pg_tables "
+                "WHERE schemaname = 'public' AND tablename = %s)",
                 (table_name,),
             )
             return cursor.fetchone()[0]

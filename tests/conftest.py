@@ -1,4 +1,5 @@
 from typing import Iterator
+
 import pytest
 from testcontainers.postgres import PostgresContainer
 

@@ -44,7 +44,10 @@ def fetch_readme():
             downloader.download_file(readme_filename, readme_local_path, checksums=None)
 
             if readme_local_path.exists():
-                print(f"Successfully downloaded '{readme_filename}' to '{readme_local_path}'")
+                print(
+                    f"Successfully downloaded '{readme_filename}' "
+                    f"to '{readme_local_path}'"
+                )
             else:
                 print(f"Error: Download of '{readme_filename}' failed.")
 
