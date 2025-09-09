@@ -335,7 +335,7 @@ def main():
                         "records_extracted": record_counter.value,
                         "records_inserted": cdc_metrics.get("inserts", 0),
                         "records_deleted": cdc_metrics.get("deletes", 0),
-                        "records_updated": 0,  # 'updates' not yet implemented in CDC
+                        "records_updated": cdc_metrics.get("updates", 0),
                     }
                     loader.log_run_detail(log_id, metrics)
                     loader.apply_changes(

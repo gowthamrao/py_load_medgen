@@ -47,14 +47,14 @@ def setup_teardown_tables(postgres_db_dsn) -> None:
             cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE} CASCADE;")
             cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE}_old CASCADE;")
             # Ensure CDC temp tables are gone
-            cur.execute("DROP TABLE IF EXISTS cdc_deletes; DROP TABLE IF EXISTS cdc_inserts;")
+            cur.execute("DROP TABLE IF EXISTS cdc_deletes; DROP TABLE IF EXISTS cdc_inserts; DROP TABLE IF EXISTS cdc_updates;")
     yield
     with psycopg.connect(postgres_db_dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(f"DROP TABLE IF EXISTS {STAGING_TABLE} CASCADE;")
             cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE} CASCADE;")
             cur.execute(f"DROP TABLE IF EXISTS {PRODUCTION_TABLE}_old CASCADE;")
-            cur.execute("DROP TABLE IF EXISTS cdc_deletes; DROP TABLE IF EXISTS cdc_inserts;")
+            cur.execute("DROP TABLE IF EXISTS cdc_deletes; DROP TABLE IF EXISTS cdc_inserts; DROP TABLE IF EXISTS cdc_updates;")
 
 
 @pytest.mark.integration
@@ -153,3 +153,105 @@ def test_delta_load_and_soft_delete_scenario(postgres_db_dsn) -> None:
 
         loader.cleanup(STAGING_TABLE, PRODUCTION_TABLE)
         conn.commit()
+
+
+from py_load_medgen.parser import MrconsoRecord, stream_mrconso_tsv
+from py_load_medgen.sql.ddl import (
+    PRODUCTION_CONCEPTS_DDL,
+    PRODUCTION_CONCEPTS_INDEXES_DDL,
+    STAGING_CONCEPTS_DDL,
+)
+
+# V1: Initial dataset for concepts
+V1_CONCEPTS_DATA = [
+    MrconsoRecord("C001", "ENG", "P", "L001", "PF", "S001", "Y", "A001", None, "M001", "D001", "SRC", "PT", "CODE1", "Record One", "0", "N", None, "raw1"),
+    MrconsoRecord("C002", "ENG", "P", "L002", "PF", "S002", "Y", "A002", None, "M002", "D002", "SRC", "PT", "CODE2", "Record Two", "0", "N", None, "raw2"),
+    MrconsoRecord("C003", "ENG", "P", "L003", "PF", "S003", "Y", "A003", None, "M003", "D003", "SRC", "PT", "CODE3", "Record Three", "0", "N", None, "raw3"),
+]
+
+# V2: Updated dataset for concepts
+# - A001: record_str is updated.
+# - A002: record is deleted.
+# - A004: new record is inserted.
+V2_CONCEPTS_DATA = [
+    MrconsoRecord("C001", "ENG", "P", "L001", "PF", "S001", "Y", "A001", None, "M001", "D001", "SRC", "PT", "CODE1", "Record One Updated", "0", "N", None, "raw1_updated"),
+    MrconsoRecord("C003", "ENG", "P", "L003", "PF", "S003", "Y", "A003", None, "M003", "D003", "SRC", "PT", "CODE3", "Record Three", "0", "N", None, "raw3"),
+    MrconsoRecord("C004", "ENG", "P", "L004", "PF", "S004", "Y", "A004", None, "M004", "D004", "SRC", "PT", "CODE4", "Record Four", "0", "N", None, "raw4"),
+]
+
+
+@pytest.mark.integration
+def test_delta_load_with_updates(postgres_db_dsn) -> None:
+    """
+    Tests that the delta load correctly handles inserts, updates, and deletes.
+    """
+    STAGING_CONCEPTS_TABLE = "staging_medgen_concepts"
+    PRODUCTION_CONCEPTS_TABLE = "medgen_concepts"
+    CONCEPTS_PK = "concept_id"
+    CONCEPTS_BUSINESS_KEY = "aui"
+
+    with PostgresNativeLoader(db_dsn=postgres_db_dsn, autocommit=False) as loader:
+        conn = loader.conn
+        loader._initialize_metadata()
+
+        # --- 1. Initial Load (V1) ---
+        loader.initialize_staging(STAGING_CONCEPTS_TABLE, STAGING_CONCEPTS_DDL)
+        v1_byte_iterator = stream_mrconso_tsv(iter(V1_CONCEPTS_DATA))
+        loader.bulk_load(STAGING_CONCEPTS_TABLE, v1_byte_iterator)
+        conn.commit()
+
+        loader.apply_changes(
+            mode="full",
+            staging_table=STAGING_CONCEPTS_TABLE,
+            production_table=PRODUCTION_CONCEPTS_TABLE,
+            production_ddl=PRODUCTION_CONCEPTS_DDL,
+            index_ddls=PRODUCTION_CONCEPTS_INDEXES_DDL,
+            pk_name=CONCEPTS_PK,
+        )
+        conn.commit()
+
+        # --- 2. Delta Load (V2) ---
+        loader.initialize_staging(STAGING_CONCEPTS_TABLE, STAGING_CONCEPTS_DDL)
+        v2_byte_iterator = stream_mrconso_tsv(iter(V2_CONCEPTS_DATA))
+        loader.bulk_load(STAGING_CONCEPTS_TABLE, v2_byte_iterator)
+        conn.commit()
+
+        cdc_metrics = loader.execute_cdc(
+            staging_table=STAGING_CONCEPTS_TABLE,
+            production_table=PRODUCTION_CONCEPTS_TABLE,
+            pk_name=CONCEPTS_PK,
+            business_key=CONCEPTS_BUSINESS_KEY,
+        )
+
+        assert cdc_metrics["inserts"] == 1
+        assert cdc_metrics["updates"] == 1
+        assert cdc_metrics["deletes"] == 1
+
+        loader.apply_changes(
+            mode="delta",
+            staging_table=STAGING_CONCEPTS_TABLE,
+            production_table=PRODUCTION_CONCEPTS_TABLE,
+            production_ddl=PRODUCTION_CONCEPTS_DDL,
+            index_ddls=PRODUCTION_CONCEPTS_INDEXES_DDL,
+            pk_name=CONCEPTS_PK,
+            business_key=CONCEPTS_BUSINESS_KEY,
+        )
+        conn.commit()
+
+        # --- Verification ---
+        with conn.cursor(row_factory=psycopg.rows.dict_row) as cur:
+            cur.execute(f"SELECT aui, record_str, is_active FROM {PRODUCTION_CONCEPTS_TABLE} ORDER BY aui")
+            results = cur.fetchall()
+
+            assert len(results) == 4
+
+            record_states = {r['aui']: (r['record_str'], r['is_active']) for r in results}
+
+            # A001 was updated
+            assert record_states["A001"] == ("Record One Updated", True)
+            # A002 was deleted
+            assert record_states["A002"] == ("Record Two", False)
+            # A003 was unchanged
+            assert record_states["A003"] == ("Record Three", True)
+            # A004 was inserted
+            assert record_states["A004"] == ("Record Four", True)
