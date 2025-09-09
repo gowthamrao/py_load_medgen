@@ -1,13 +1,13 @@
-import pytest
-import psycopg
 from pathlib import Path
+
+import pytest
 
 from py_load_medgen.loader.postgres import PostgresNativeLoader
 from py_load_medgen.parser import parse_mrsat, stream_mrsat_tsv
 from py_load_medgen.sql.ddl import (
-    STAGING_MEDGEN_SOURCES_DDL,
     PRODUCTION_MEDGEN_SOURCES_DDL,
     PRODUCTION_MEDGEN_SOURCES_INDEXES_DDL,
+    STAGING_MEDGEN_SOURCES_DDL,
 )
 
 # Sample MRSAT.RRF data for testing
@@ -52,17 +52,22 @@ def test_full_load_of_sources(postgres_db_dsn: str, tmp_path: Path):
             production_ddl=PRODUCTION_MEDGEN_SOURCES_DDL,
             index_ddls=PRODUCTION_MEDGEN_SOURCES_INDEXES_DDL,
             pk_name="source_id",
-            full_load_select_sql="INSERT INTO {new_production_table} (cui, source_abbreviation, attribute_name, attribute_value, raw_record) SELECT cui, sab, atn, atv, raw_record FROM {staging_table};"
+            full_load_select_sql="INSERT INTO {new_production_table} "
+            "(cui, source_abbreviation, attribute_name, attribute_value, raw_record) "
+            "SELECT cui, sab, atn, atv, raw_record FROM {staging_table};",
         )
 
         # 5. Verification
         with loader.conn.cursor() as cur:
-            cur.execute(f"SELECT COUNT(*) FROM {PRODUCTION_TABLE} WHERE is_active = true;")
+            cur.execute(
+                f"SELECT COUNT(*) FROM {PRODUCTION_TABLE} WHERE is_active = true;"
+            )
             count = cur.fetchone()[0]
             assert count == 3
 
             cur.execute(
-                f"SELECT cui, source_abbreviation, attribute_name, attribute_value FROM {PRODUCTION_TABLE} ORDER BY cui, attribute_name;"
+                f"SELECT cui, source_abbreviation, attribute_name, attribute_value "
+                f"FROM {PRODUCTION_TABLE} ORDER BY cui, attribute_name;"
             )
             results = cur.fetchall()
 

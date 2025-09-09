@@ -37,4 +37,7 @@ class LoaderFactory:
         # elif scheme == "redshift":
         #     return RedshiftNativeLoader(db_dsn=db_dsn)
         else:
-            raise ValueError(f"Unsupported database scheme: '{scheme}'. Supported schemes are: 'postgresql'.")
+            raise ValueError(
+                f"Unsupported database scheme: '{scheme}'. "
+                "Supported schemes are: 'postgresql'."
+            )

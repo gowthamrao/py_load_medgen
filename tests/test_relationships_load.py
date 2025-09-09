@@ -56,7 +56,9 @@ def test_full_load_relationships(postgres_db_dsn):
         # Initialize staging
         loader.initialize_staging(
             STAGING_TABLE,
-            STAGING_MEDGEN_RELATIONSHIPS_DDL.replace("staging_medgen_relationships", STAGING_TABLE)
+            STAGING_MEDGEN_RELATIONSHIPS_DDL.replace(
+                "staging_medgen_relationships", STAGING_TABLE
+            ),
         )
 
         # Parse and bulk load
@@ -70,10 +72,16 @@ def test_full_load_relationships(postgres_db_dsn):
             mode="full",
             staging_table=STAGING_TABLE,
             production_table=PRODUCTION_TABLE,
-            production_ddl=PRODUCTION_MEDGEN_RELATIONSHIPS_DDL.replace("medgen_relationships", PRODUCTION_TABLE),
-            index_ddls=[ddl.replace("medgen_relationships", PRODUCTION_TABLE) for ddl in PRODUCTION_MEDGEN_RELATIONSHIPS_INDEXES_DDL],
+            production_ddl=PRODUCTION_MEDGEN_RELATIONSHIPS_DDL.replace(
+                "medgen_relationships", PRODUCTION_TABLE
+            ),
+            index_ddls=[
+                ddl.replace("medgen_relationships", PRODUCTION_TABLE)
+                for ddl in PRODUCTION_MEDGEN_RELATIONSHIPS_INDEXES_DDL
+            ],
             pk_name="relationship_id",
-            business_key="rui", # business_key is not used in full load, but required by signature
+            business_key="rui",
+            # business_key is not used in full load, but required by signature
         )
 
         # Clean up
@@ -86,7 +94,10 @@ def test_full_load_relationships(postgres_db_dsn):
         cur.execute(f"SELECT COUNT(*) FROM {PRODUCTION_TABLE}")
         assert cur.fetchone()[0] == 3
 
-        cur.execute(f"SELECT cui1, cui2, rel, rela, sab FROM {PRODUCTION_TABLE} WHERE rui = 'R12345678'")
+        cur.execute(
+            f"SELECT cui1, cui2, rel, rela, sab FROM {PRODUCTION_TABLE} "
+            f"WHERE rui = 'R12345678'"
+        )
         record = cur.fetchone()
         assert record[0] == "C0001175"
         assert record[1] == "C0001175"
@@ -102,7 +113,8 @@ def test_full_load_relationships(postgres_db_dsn):
         # Check that staging and backup tables are gone
         def table_exists(cursor, table_name):
             cursor.execute(
-                "SELECT EXISTS (SELECT FROM pg_tables WHERE schemaname = 'public' AND tablename = %s)",
+                "SELECT EXISTS (SELECT FROM pg_tables "
+                "WHERE schemaname = 'public' AND tablename = %s)",
                 (table_name,),
             )
             return cursor.fetchone()[0]

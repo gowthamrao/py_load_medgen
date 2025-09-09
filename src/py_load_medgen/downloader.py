@@ -8,7 +8,9 @@ from typing import Optional
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
 class Downloader:
@@ -16,7 +18,9 @@ class Downloader:
     Handles downloading data files from the NCBI FTP server with retry logic.
     """
 
-    def __init__(self, ftp_host: str = "ftp.ncbi.nlm.nih.gov", ftp_path: str = "/pub/medgen"):
+    def __init__(
+        self, ftp_host: str = "ftp.ncbi.nlm.nih.gov", ftp_path: str = "/pub/medgen"
+    ):
         """
         Initializes the Downloader.
         Args:
@@ -72,8 +76,10 @@ class Downloader:
                     checksums[filename.lstrip("./")] = checksum
             return checksums
         except ftplib.all_errors as e:
-            logging.warning(f"Could not find or parse checksum file '{checksum_filename}': {e}")
-            return {} # Return empty dict if checksums aren't available
+            logging.warning(
+                f"Could not find or parse checksum file '{checksum_filename}': {e}"
+            )
+            return {}  # Return empty dict if checksums aren't available
 
     def get_release_version(self, readme_filename: str = "README") -> str:
         """
@@ -92,7 +98,11 @@ class Downloader:
             self.ftp.retrlines(f"RETR {readme_filename}", lines.append)
             for line in lines:
                 # Common patterns for release dates in README files
-                match = re.search(r"(?:Last update|Release Date|Version):\s*(.*)", line, re.IGNORECASE)
+                match = re.search(
+                    r"(?:Last update|Release Date|Version):\s*(.*)",
+                    line,
+                    re.IGNORECASE,
+                )
                 if match:
                     version = match.group(1).strip()
                     logging.info(f"Found release version: {version}")
@@ -135,7 +145,10 @@ class Downloader:
             logging.info(f"Checksum valid for {filename}.")
             return True
         else:
-            logging.error(f"Checksum mismatch for {filename}! Expected: {expected_md5}, Got: {actual_md5}")
+            logging.error(
+                f"Checksum mismatch for {filename}! "
+                f"Expected: {expected_md5}, Got: {actual_md5}"
+            )
             return False
 
     @retry(
@@ -144,7 +157,10 @@ class Downloader:
         reraise=True,
     )
     def download_file(
-        self, remote_filename: str, local_filepath: Path, checksums: Optional[dict[str, str]] = None
+        self,
+        remote_filename: str,
+        local_filepath: Path,
+        checksums: Optional[dict[str, str]] = None,
     ) -> None:
         """
         Downloads a single file from the FTP server, resuming if partially downloaded,
@@ -153,10 +169,13 @@ class Downloader:
         Args:
             remote_filename: The name of the file on the FTP server.
             local_filepath: The local path to save the downloaded file.
-            checksums: A dictionary of checksums to verify against. If None, verification is skipped.
+            checksums: A dictionary of checksums to verify against. If None,
+            verification is skipped.
         """
         if not self.ftp:
-            raise ConnectionError("FTP connection not established. Use within a 'with' statement.")
+            raise ConnectionError(
+                "FTP connection not established. Use within a 'with' statement."
+            )
 
         try:
             local_filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -177,22 +196,30 @@ class Downloader:
 
             # The 'rest' argument tells retrbinary where to start the download.
             with open(local_filepath, open_mode) as f:
-                # The `rest` parameter is passed to the underlying `sendcmd`, so it should only
-                # be provided when we are actually resuming.
+                # The `rest` parameter is passed to the underlying `sendcmd`, so it
+                # should only be provided when we are actually resuming.
                 self.ftp.retrbinary(
-                    f"RETR {remote_filename}", f.write, rest=rest_pos if rest_pos > 0 else None
+                    f"RETR {remote_filename}",
+                    f.write,
+                    rest=rest_pos if rest_pos > 0 else None,
                 )
 
             logging.info(f"Successfully downloaded {remote_filename}")
 
             if checksums:
                 if not self.verify_file(local_filepath, checksums):
-                    # If checksum fails, the file is corrupt. Delete it for a clean retry.
+                    # If checksum fails, the file is corrupt.
+                    # Delete it for a clean retry.
                     local_filepath.unlink()
-                    raise ValueError(f"Checksum validation failed for {remote_filename}")
+                    raise ValueError(
+                        f"Checksum validation failed for {remote_filename}"
+                    )
 
         except (*ftplib.all_errors, ValueError) as e:
-            logging.error(f"Error during download or verification of {remote_filename}: {e}")
+            logging.error(
+                f"Error during download or verification of {remote_filename}: {e}"
+            )
             # If it's a checksum error, the file is already deleted.
-            # If it's an FTP error, we leave the partial file in place for the next retry attempt.
+            # If it's an FTP error, we leave the partial file in place for the
+            # next retry attempt.
             raise

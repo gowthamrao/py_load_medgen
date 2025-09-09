@@ -1,12 +1,10 @@
 import gzip
 import io
 from pathlib import Path
+
 import pytest
 
-from py_load_medgen.parser import (
-    parse_names,
-    parse_mrconso
-)
+from py_load_medgen.parser import parse_mrconso, parse_names
 
 
 def test_parse_names_exceeds_max_errors(tmp_path: Path):
@@ -69,8 +67,10 @@ def test_parse_mrconso_exceeds_max_errors_index_error():
     """
     # 1. Arrange: Create a stream where the second row will cause an IndexError
     content_lines = [
-        "C0000005|ENG|P|L0000005|PF|S0007492|Y|A26634265||M0019694|D012711|MSH|PEN|D012711|(131)I-Macroaggregated Albumin|0|N|256|",
-        "C0000039|ENG|P|L0000039|PF|S0007563|Y|A26634304||M0023172|D015060|MSH|PEP|D015060|1,2-Dipalmitoylphosphatidylcholine|3|N|", # Missing one column
+        "C0000005|ENG|P|L0000005|PF|S0007492|Y|A26634265||M0019694|D012711|MSH|PEN|"
+        "D012711|(131)I-Macroaggregated Albumin|0|N|256|",
+        "C0000039|ENG|P|L0000039|PF|S0007563|Y|A26634304||M0023172|D015060|MSH|PEP|"
+        "D015060|1,2-Dipalmitoylphosphatidylcholine|3|N|",  # Missing one column
     ]
     file_stream = io.StringIO("\n".join(content_lines))
 

@@ -13,7 +13,9 @@ from py_load_medgen.sql.ddl import (
 )
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
 class PostgresNativeLoader(AbstractNativeLoader):
@@ -62,7 +64,10 @@ class PostgresNativeLoader(AbstractNativeLoader):
                     logging.error(f"Database connection error: {e}")
                     raise
             elif self.conn and self.conn.closed:
-                raise ConnectionError("Managed connection was closed and cannot be reopened without a DSN.")
+                raise ConnectionError(
+                    "Managed connection was closed and cannot be "
+                    "reopened without a DSN."
+                )
             elif not self._managed_connection:
                 raise ConnectionError("The provided external connection is closed.")
             else:
@@ -70,7 +75,10 @@ class PostgresNativeLoader(AbstractNativeLoader):
         self._initialize_metadata()
 
     def close(self) -> None:
-        """Closes the database connection if it was created and is managed by this loader."""
+        """
+        Closes the database connection if it was created and is managed by this
+        loader.
+        """
         if self.conn and not self.conn.closed and self._managed_connection:
             self.conn.close()
             logging.info("Managed database connection closed.")
@@ -103,7 +111,9 @@ class PostgresNativeLoader(AbstractNativeLoader):
             raise ConnectionError("Database connection not established.")
         logging.info(f"Starting bulk load into '{table_name}'...")
         with self.conn.cursor() as cur:
-            with cur.copy(f"COPY {table_name} FROM STDIN WITH (FORMAT TEXT, NULL '\\N')") as copy:
+            with cur.copy(
+                f"COPY {table_name} FROM STDIN WITH (FORMAT TEXT, NULL '\\N')"
+            ) as copy:
                 for line in data_iterator:
                     copy.write(line)
         self._commit()
@@ -132,7 +142,11 @@ class PostgresNativeLoader(AbstractNativeLoader):
         """Logs the start of an ETL run and returns the log_id."""
         if not self.conn:
             raise ConnectionError("Database connection not established.")
-        sql = "INSERT INTO etl_audit_log (run_id, package_version, load_mode, source_files, medgen_release_version, start_time, status) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING log_id;"
+        sql = (
+            "INSERT INTO etl_audit_log (run_id, package_version, load_mode, "
+            "source_files, medgen_release_version, start_time, status) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING log_id;"
+        )
         start_time = datetime.now(timezone.utc)
         source_files_json = psycopg.types.json.Jsonb(source_files)
         with self.conn.cursor() as cur:
@@ -164,10 +178,24 @@ class PostgresNativeLoader(AbstractNativeLoader):
         """Logs the completion or failure of an ETL run."""
         if not self.conn:
             raise ConnectionError("Database connection not established.")
-        sql = "UPDATE etl_audit_log SET end_time = %s, status = %s, records_extracted = %s, records_loaded = %s, error_message = %s WHERE log_id = %s;"
+        sql = (
+            "UPDATE etl_audit_log SET end_time = %s, status = %s, "
+            "records_extracted = %s, records_loaded = %s, error_message = %s "
+            "WHERE log_id = %s;"
+        )
         end_time = datetime.now(timezone.utc)
         with self.conn.cursor() as cur:
-            cur.execute(sql, (end_time, status, records_extracted, records_loaded, error_message, log_id))
+            cur.execute(
+                sql,
+                (
+                    end_time,
+                    status,
+                    records_extracted,
+                    records_loaded,
+                    error_message,
+                    log_id,
+                ),
+            )
             self._commit()
         logging.info(f"ETL run finished for Log ID: {log_id}. Status: {status}")
 
@@ -205,12 +233,23 @@ class PostgresNativeLoader(AbstractNativeLoader):
         """Executes Change Data Capture (CDC) logic using SQL."""
         if not self.conn:
             raise ConnectionError("Database connection not established.")
-        logging.info(f"Executing CDC for {production_table} using key '{business_key}'...")
+        logging.info(
+            f"Executing CDC for {production_table} using key '{business_key}'..."
+        )
         with self.conn.cursor() as cur:
             # Ensure temp tables exist and are empty for this run.
-            cur.execute("CREATE TEMP TABLE IF NOT EXISTS cdc_deletes (id BIGINT) ON COMMIT PRESERVE ROWS;")
-            cur.execute(f"CREATE TEMP TABLE IF NOT EXISTS cdc_inserts (LIKE {staging_table} INCLUDING DEFAULTS) ON COMMIT PRESERVE ROWS;")
-            cur.execute(f"CREATE TEMP TABLE IF NOT EXISTS cdc_updates (LIKE {staging_table} INCLUDING DEFAULTS) ON COMMIT PRESERVE ROWS;")
+            cur.execute(
+                "CREATE TEMP TABLE IF NOT EXISTS cdc_deletes (id BIGINT) "
+                "ON COMMIT PRESERVE ROWS;"
+            )
+            cur.execute(
+                f"CREATE TEMP TABLE IF NOT EXISTS cdc_inserts "
+                f"(LIKE {staging_table} INCLUDING DEFAULTS) ON COMMIT PRESERVE ROWS;"
+            )
+            cur.execute(
+                f"CREATE TEMP TABLE IF NOT EXISTS cdc_updates "
+                f"(LIKE {staging_table} INCLUDING DEFAULTS) ON COMMIT PRESERVE ROWS;"
+            )
             cur.execute("TRUNCATE TABLE cdc_deletes, cdc_inserts, cdc_updates;")
 
             cur.execute("SELECT to_regclass(%s)", (production_table,))
@@ -219,68 +258,114 @@ class PostgresNativeLoader(AbstractNativeLoader):
             delete_count = 0
             update_count = 0
             if table_exists:
-                # Get the column names from the staging table to build a hash for comparison
-                # Exclude the raw_record column as it may contain subtle differences that don't warrant an update.
-                cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = %s AND column_name != 'raw_record' ORDER BY ordinal_position;", (staging_table,))
+                # Get the column names from the staging table to build a hash for
+                # comparison. Exclude the raw_record column as it may contain
+                # subtle differences that don't warrant an update.
+                cur.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = %s AND column_name != 'raw_record' "
+                    "ORDER BY ordinal_position;",
+                    (staging_table,),
+                )
                 columns_to_hash = [row[0] for row in cur.fetchall()]
                 column_list_str = ", ".join([f's."{col}"' for col in columns_to_hash])
 
                 # Construct the JOIN condition for one or more business keys
-                keys = [key.strip() for key in business_key.split(',')]
+                keys = [key.strip() for key in business_key.split(",")]
                 join_condition = " AND ".join([f"p.{key} = s.{key}" for key in keys])
 
                 # --- Find Deletes ---
-                where_condition_deletes = " AND ".join([f"s.{key} IS NULL" for key in keys])
-                sql_find_deletes = f"INSERT INTO cdc_deletes (id) SELECT p.{pk_name} FROM {production_table} p LEFT JOIN {staging_table} s ON {join_condition} WHERE {where_condition_deletes} AND p.is_active = true;"
+                where_condition_deletes = " AND ".join(
+                    [f"s.{key} IS NULL" for key in keys]
+                )
+                sql_find_deletes = (
+                    f"INSERT INTO cdc_deletes (id) SELECT p.{pk_name} "
+                    f"FROM {production_table} p LEFT JOIN {staging_table} s "
+                    f"ON {join_condition} WHERE {where_condition_deletes} "
+                    "AND p.is_active = true;"
+                )
                 cur.execute(sql_find_deletes)
                 delete_count = cur.rowcount
 
                 # --- Find Updates ---
-                # Compare a hash of all columns to detect changes in existing records.
-                # Using MD5 is a common and effective strategy for this.
-                hash_comparison = f"MD5(ROW({column_list_str})::TEXT) != MD5(ROW({column_list_str.replace('s.', 'p.')})::TEXT)"
-                sql_find_updates = f"INSERT INTO cdc_updates SELECT s.* FROM {staging_table} s JOIN {production_table} p ON {join_condition} WHERE p.is_active = true AND {hash_comparison};"
+                # Compare a hash of all columns to detect changes in existing
+                # records. Using MD5 is a common and effective strategy for this.
+                hash_comparison = (
+                    f"MD5(ROW({column_list_str})::TEXT) != "
+                    f"MD5(ROW({column_list_str.replace('s.', 'p.')})::TEXT)"
+                )
+                sql_find_updates = (
+                    f"INSERT INTO cdc_updates SELECT s.* FROM {staging_table} s "
+                    f"JOIN {production_table} p ON {join_condition} "
+                    f"WHERE p.is_active = true AND {hash_comparison};"
+                )
                 cur.execute(sql_find_updates)
                 update_count = cur.rowcount
 
                 # --- Find Inserts ---
-                # Inserts are records in staging that are not in production (by business key).
-                # We also need to exclude records that were identified as updates.
-                update_join_condition = " AND ".join([f"s.{key} = u.{key}" for key in keys])
+                # Inserts are records in staging that are not in production
+                # (by business key). We also need to exclude records that
+                # were identified as updates.
+                update_join_condition = " AND ".join(
+                    [f"s.{key} = u.{key}" for key in keys]
+                )
                 sql_find_inserts = f"""
                     INSERT INTO cdc_inserts
                     SELECT s.*
                     FROM {staging_table} s
                     LEFT JOIN {production_table} p ON {join_condition}
                     LEFT JOIN cdc_updates u ON {update_join_condition}
-                    WHERE p.{pk_name} IS NULL AND u.{business_key.split(',')[0]} IS NULL;
+                    WHERE p.{pk_name} IS NULL
+                    AND u.{business_key.split(',')[0]} IS NULL;
                 """
                 cur.execute(sql_find_inserts)
                 insert_count = cur.rowcount
             else:
                 # If production table doesn't exist, all staging records are inserts
-                logging.info(f"Production table {production_table} does not exist. Treating all records as inserts.")
-                sql_find_inserts = f"INSERT INTO cdc_inserts SELECT s.* FROM {staging_table} s;"
+                logging.info(
+                    f"Production table {production_table} does not exist. "
+                    "Treating all records as inserts."
+                )
+                sql_find_inserts = (
+                    f"INSERT INTO cdc_inserts SELECT s.* FROM {staging_table} s;"
+                )
                 cur.execute(sql_find_inserts)
                 insert_count = cur.rowcount
 
-        logging.info(f"CDC complete. Inserts: {insert_count}, Updates: {update_count}, Deletes: {delete_count}")
-        return {"inserts": insert_count, "updates": update_count, "deletes": delete_count}
+        logging.info(
+            f"CDC complete. Inserts: {insert_count}, "
+            f"Updates: {update_count}, Deletes: {delete_count}"
+        )
+        return {
+            "inserts": insert_count,
+            "updates": update_count,
+            "deletes": delete_count,
+        }
 
     def _get_table_indexes(self, table_name: str) -> list[str]:
         """Retrieves the DDL for all non-primary-key indexes on a given table."""
         if not self.conn:
             raise ConnectionError("Database connection not established.")
         logging.info(f"Discovering indexes for table: {table_name}")
-        sql = "SELECT indexdef FROM pg_indexes i JOIN pg_class c ON i.indexname = c.relname LEFT JOIN pg_constraint con ON c.oid = con.conindid WHERE i.tablename = %s AND con.contype IS DISTINCT FROM 'p';"
+        sql = (
+            "SELECT indexdef FROM pg_indexes i "
+            "JOIN pg_class c ON i.indexname = c.relname "
+            "LEFT JOIN pg_constraint con ON c.oid = con.conindid "
+            "WHERE i.tablename = %s AND con.contype IS DISTINCT FROM 'p';"
+        )
         with self.conn.cursor() as cur:
             try:
                 cur.execute(sql, (table_name,))
                 index_ddls = [row[0] for row in cur.fetchall()]
-                logging.info(f"Found {len(index_ddls)} non-PK indexes for {table_name}.")
+                logging.info(
+                    f"Found {len(index_ddls)} non-PK indexes for {table_name}."
+                )
                 return index_ddls
             except psycopg.errors.UndefinedTable:
-                logging.warning(f"Table '{table_name}' does not exist, cannot discover indexes. Returning empty list.")
+                logging.warning(
+                    f"Table '{table_name}' does not exist, cannot discover indexes. "
+                    "Returning empty list."
+                )
                 return []
 
     def apply_changes(
@@ -296,16 +381,27 @@ class PostgresNativeLoader(AbstractNativeLoader):
     ) -> None:
         """Applies changes to the production table based on the load mode."""
         if mode == "full":
-            self._apply_full_load(staging_table, production_table, production_ddl, full_load_select_sql)
+            self._apply_full_load(
+                staging_table,
+                production_table,
+                production_ddl,
+                full_load_select_sql,
+            )
         elif mode == "delta":
             if not business_key:
                 raise ValueError("A 'business_key' is required for delta loads.")
-            self._apply_delta_load(production_table, pk_name, business_key, production_ddl, index_ddls)
+            self._apply_delta_load(
+                production_table, pk_name, business_key, production_ddl, index_ddls
+            )
         else:
             raise ValueError(f"Unknown load mode: {mode}")
 
     def _apply_full_load(
-        self, staging_table: str, production_table: str, production_ddl: str, full_load_select_sql: Optional[str] = None
+        self,
+        staging_table: str,
+        production_table: str,
+        production_ddl: str,
+        full_load_select_sql: Optional[str] = None,
     ) -> None:
         """Applies changes atomically using the 'atomic swap' method for a full load."""
         if not self.conn:
@@ -313,7 +409,9 @@ class PostgresNativeLoader(AbstractNativeLoader):
         new_production_table = f"{production_table}_new"
         backup_table = f"{production_table}_old"
         index_ddls = self._get_table_indexes(production_table)
-        logging.info(f"Applying FULL load for table {production_table} with atomic swap...")
+        logging.info(
+            f"Applying FULL load for table {production_table} with atomic swap..."
+        )
         with self.conn.cursor() as cur:
             cur.execute(production_ddl.format(table_name=new_production_table))
 
@@ -321,32 +419,63 @@ class PostgresNativeLoader(AbstractNativeLoader):
                 # Use custom SQL for loading data from staging to production
                 insert_sql = full_load_select_sql.format(
                     new_production_table=new_production_table,
-                    staging_table=staging_table
+                    staging_table=staging_table,
                 )
-                logging.info(f"Loading data into '{new_production_table}' using custom SQL...")
+                logging.info(
+                    f"Loading data into '{new_production_table}' using custom SQL..."
+                )
                 cur.execute(insert_sql)
             else:
                 # Use generic SELECT * for tables with matching schemas
-                cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = %s ORDER BY ordinal_position;", (staging_table,))
+                cur.execute(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_name = %s ORDER BY ordinal_position;",
+                    (staging_table,),
+                )
                 columns = [row[0] for row in cur.fetchall()]
                 column_list_str = ", ".join(columns)
-                logging.info(f"Loading data from '{staging_table}' into '{new_production_table}'")
-                cur.execute(f"INSERT INTO {new_production_table} ({column_list_str}) SELECT {column_list_str} FROM {staging_table};")
+                logging.info(
+                    f"Loading data from '{staging_table}' into '{new_production_table}'"
+                )
+                cur.execute(
+                    f"INSERT INTO {new_production_table} ({column_list_str}) "
+                    f"SELECT {column_list_str} FROM {staging_table};"
+                )
 
-            logging.info(f"Replicating {len(index_ddls)} indexes on new table {new_production_table}...")
+            logging.info(
+                f"Replicating {len(index_ddls)} indexes on "
+                f"new table {new_production_table}..."
+            )
             for index_ddl in index_ddls:
                 prefix, sep, suffix = index_ddl.rpartition(f" ON {production_table}")
-                replicated_ddl = (prefix + f" ON {new_production_table}" + suffix) if sep else index_ddl.replace(production_table, new_production_table)
+                replicated_ddl = (
+                    (prefix + f" ON {new_production_table}" + suffix)
+                    if sep
+                    else index_ddl.replace(production_table, new_production_table)
+                )
                 cur.execute(replicated_ddl)
             logging.info("Performing atomic swap in a single transaction...")
             with self.conn.transaction():
                 cur.execute(f"DROP TABLE IF EXISTS {backup_table} CASCADE;")
-                cur.execute(f"ALTER TABLE IF EXISTS {production_table} RENAME TO {backup_table};")
-                cur.execute(f"ALTER TABLE {new_production_table} RENAME TO {production_table};")
-        logging.info(f"Atomic swap complete for {production_table}. Production data is updated.")
+                cur.execute(
+                    f"ALTER TABLE IF EXISTS {production_table} "
+                    f"RENAME TO {backup_table};"
+                )
+                cur.execute(
+                    f"ALTER TABLE {new_production_table} RENAME TO {production_table};"
+                )
+        logging.info(
+            f"Atomic swap complete for {production_table}. "
+            "Production data is updated."
+        )
 
     def _apply_delta_load(
-        self, production_table: str, pk_name: str, business_key: str, production_ddl: str, index_ddls: list[str]
+        self,
+        production_table: str,
+        pk_name: str,
+        business_key: str,
+        production_ddl: str,
+        index_ddls: list[str],
     ) -> None:
         """Applies inserts, updates, and soft deletes for a delta load."""
         if not self.conn:
@@ -356,7 +485,10 @@ class PostgresNativeLoader(AbstractNativeLoader):
             # Ensure production table and indexes exist
             cur.execute("SELECT to_regclass(%s)", (production_table,))
             if cur.fetchone()[0] is None:
-                logging.info(f"Production table '{production_table}' does not exist. Creating now...")
+                logging.info(
+                    f"Production table '{production_table}' does not exist. "
+                    "Creating now..."
+                )
                 cur.execute(production_ddl.format(table_name=production_table))
                 for index_ddl in index_ddls:
                     cur.execute(index_ddl.format(table_name=production_table))
@@ -364,37 +496,63 @@ class PostgresNativeLoader(AbstractNativeLoader):
 
             # --- Get columns for the UPDATE statement ---
             # Exclude PK and business key columns from the SET clause
-            business_key_cols = {key.strip() for key in business_key.split(',')}
-            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'cdc_updates' AND column_name != %s ORDER BY ordinal_position;", (pk_name,))
-            update_columns = [row[0] for row in cur.fetchall() if row[0] not in business_key_cols]
+            business_key_cols = {key.strip() for key in business_key.split(",")}
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'cdc_updates' AND column_name != %s "
+                "ORDER BY ordinal_position;",
+                (pk_name,),
+            )
+            update_columns = [
+                row[0] for row in cur.fetchall() if row[0] not in business_key_cols
+            ]
 
             # --- Get columns for the INSERT statement ---
             # Exclude only the PK for inserts
-            cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'cdc_inserts' AND column_name != %s ORDER BY ordinal_position;", (pk_name,))
+            cur.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_name = 'cdc_inserts' AND column_name != %s "
+                "ORDER BY ordinal_position;",
+                (pk_name,),
+            )
             insert_columns = [row[0] for row in cur.fetchall()]
             insert_column_list_str = ", ".join(f'"{col}"' for col in insert_columns)
 
             with self.conn.transaction():
                 # 1. Apply Updates
                 if update_columns:
-                    set_clause = ", ".join([f'"{col}" = s."{col}"' for col in update_columns])
+                    set_clause = ", ".join(
+                        [f'"{col}" = s."{col}"' for col in update_columns]
+                    )
                     set_clause += ", last_updated_at = NOW()"
 
-                    keys = [key.strip() for key in business_key.split(',')]
-                    join_condition = " AND ".join([f'p."{key}" = s."{key}"' for key in keys])
+                    keys = [key.strip() for key in business_key.split(",")]
+                    join_condition = " AND ".join(
+                        [f'p."{key}" = s."{key}"' for key in keys]
+                    )
 
-                    sql_update = f"UPDATE {production_table} p SET {set_clause} FROM cdc_updates s WHERE {join_condition};"
+                    sql_update = (
+                        f"UPDATE {production_table} p SET {set_clause} "
+                        f"FROM cdc_updates s WHERE {join_condition};"
+                    )
                     cur.execute(sql_update)
                     logging.info(f"Applied {cur.rowcount} updates.")
 
                 # 2. Apply Deletes
-                sql_delete = f"UPDATE {production_table} SET is_active = false, last_updated_at = NOW() WHERE {pk_name} IN (SELECT id FROM cdc_deletes);"
+                sql_delete = (
+                    f"UPDATE {production_table} SET is_active = false, "
+                    f"last_updated_at = NOW() WHERE {pk_name} "
+                    f"IN (SELECT id FROM cdc_deletes);"
+                )
                 cur.execute(sql_delete)
                 logging.info(f"Applied {cur.rowcount} soft deletes.")
 
                 # 3. Apply Inserts
                 if insert_columns:
-                    sql_insert = f"INSERT INTO {production_table} ({insert_column_list_str}) SELECT {insert_column_list_str} FROM cdc_inserts;"
+                    sql_insert = (
+                        f"INSERT INTO {production_table} ({insert_column_list_str}) "
+                        f"SELECT {insert_column_list_str} FROM cdc_inserts;"
+                    )
                     cur.execute(sql_insert)
                     logging.info(f"Applied {cur.rowcount} inserts.")
 
@@ -410,5 +568,12 @@ class PostgresNativeLoader(AbstractNativeLoader):
             with self.conn.transaction():
                 cur.execute(f"DROP TABLE IF EXISTS {backup_table} CASCADE;")
                 cur.execute(f"DROP TABLE IF EXISTS {staging_table} CASCADE;")
-                cur.execute("DROP TABLE IF EXISTS cdc_deletes; DROP TABLE IF EXISTS cdc_inserts; DROP TABLE IF EXISTS cdc_updates;")
-        logging.info(f"Cleanup complete. Dropped tables: {backup_table}, {staging_table}, cdc_deletes, cdc_inserts, cdc_updates")
+                cur.execute(
+                    "DROP TABLE IF EXISTS cdc_deletes; "
+                    "DROP TABLE IF EXISTS cdc_inserts; "
+                    "DROP TABLE IF EXISTS cdc_updates;"
+                )
+        logging.info(
+            f"Cleanup complete. Dropped tables: {backup_table}, {staging_table}, "
+            "cdc_deletes, cdc_inserts, cdc_updates"
+        )

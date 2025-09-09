@@ -6,7 +6,7 @@ import traceback
 import uuid
 from importlib import metadata
 from pathlib import Path
-from typing import Iterator, TypeVar, TypedDict, Callable, Any, NotRequired
+from typing import Any, Callable, Iterator, NotRequired, TypedDict, TypeVar
 
 from py_load_medgen.downloader import Downloader
 from py_load_medgen.loader.factory import LoaderFactory
@@ -31,6 +31,8 @@ from py_load_medgen.sql.ddl import (
     PRODUCTION_MEDGEN_HPO_MAPPING_INDEXES_DDL,
     PRODUCTION_MEDGEN_RELATIONSHIPS_DDL,
     PRODUCTION_MEDGEN_RELATIONSHIPS_INDEXES_DDL,
+    PRODUCTION_MEDGEN_SOURCES_DDL,
+    PRODUCTION_MEDGEN_SOURCES_INDEXES_DDL,
     PRODUCTION_NAMES_DDL,
     PRODUCTION_NAMES_INDEXES_DDL,
     PRODUCTION_SEMANTIC_TYPES_DDL,
@@ -38,11 +40,9 @@ from py_load_medgen.sql.ddl import (
     STAGING_CONCEPTS_DDL,
     STAGING_MEDGEN_HPO_MAPPING_DDL,
     STAGING_MEDGEN_RELATIONSHIPS_DDL,
+    STAGING_MEDGEN_SOURCES_DDL,
     STAGING_NAMES_DDL,
     STAGING_SEMANTIC_TYPES_DDL,
-    STAGING_MEDGEN_SOURCES_DDL,
-    PRODUCTION_MEDGEN_SOURCES_DDL,
-    PRODUCTION_MEDGEN_SOURCES_INDEXES_DDL,
 )
 
 # Configure logging
@@ -118,7 +118,9 @@ ETL_CONFIG: list[EtlFileConfig] = [
         "prod_pk": "source_id",
         "business_key": "atui",
         "index_ddls": PRODUCTION_MEDGEN_SOURCES_INDEXES_DDL,
-        "full_load_select_sql": "INSERT INTO {new_production_table} (cui, source_abbreviation, attribute_name, attribute_value, raw_record) SELECT cui, sab, atn, atv, raw_record FROM {staging_table};"
+        "full_load_select_sql": "INSERT INTO {new_production_table} "
+        "(cui, source_abbreviation, attribute_name, attribute_value, raw_record) "
+        "SELECT cui, sab, atn, atv, raw_record FROM {staging_table};",
     },
     {
         "file": "NAMES.RRF.gz",
@@ -171,33 +173,38 @@ def main():
         "--download-dir",
         type=str,
         default=".",
-        help="The directory to download the MedGen files to. Defaults to the current directory.",
+        help="The directory to download the MedGen files to. "
+        "Defaults to the current directory.",
     )
     parser.add_argument(
         "--db-dsn",
         type=str,
         default=os.environ.get("MEDGEN_DB_DSN"),
-        help="PostgreSQL connection string (DSN). Can also be set via the MEDGEN_DB_DSN environment variable.",
+        help="PostgreSQL connection string (DSN). "
+        "Can also be set via the MEDGEN_DB_DSN environment variable.",
     )
     parser.add_argument(
         "--mode",
         type=str,
         choices=["full", "delta"],
         default="full",
-        help="The ETL load strategy to perform. 'full' performs a complete refresh. 'delta' applies changes since the last load.",
+        help="The ETL load strategy to perform. 'full' performs a complete refresh. "
+        "'delta' applies changes since the last load.",
     )
     parser.add_argument(
         "--max-parse-errors",
         type=int,
         default=100,
-        help="The maximum number of parsing errors to tolerate before aborting the ETL process.",
+        help="The maximum number of parsing errors to tolerate "
+        "before aborting the ETL process.",
     )
 
     args = parser.parse_args()
 
     if not args.db_dsn:
         logging.error(
-            "Database connection string is required. Please provide it via --db-dsn or MEDGEN_DB_DSN."
+            "Database connection string is required. "
+            "Please provide it via --db-dsn or MEDGEN_DB_DSN."
         )
         sys.exit(1)
 
@@ -267,10 +274,15 @@ def main():
             for config in ETL_CONFIG:
                 local_path = local_file_paths[config["file"]]
 
-                logging.info(f"--- Starting ETL for {config['file']} -> {config['prod_table']} ---")
+                logging.info(
+                    f"--- Starting ETL for {config['file']} -> "
+                    f"{config['prod_table']} ---"
+                )
 
                 # A. Initialize Staging
-                loader.initialize_staging(config["staging_table"], config["staging_ddl"])
+                loader.initialize_staging(
+                    config["staging_table"], config["staging_ddl"]
+                )
 
                 # B. Parse, Transform, and Load
                 logging.info(f"Opening and parsing {local_path}...")
@@ -280,18 +292,26 @@ def main():
                     parser_func = config["parser"]
                     if config["file"].endswith(".gz"):
                         # For gzipped files, the parser function takes the path
-                        records_iterator = parser_func(local_path, max_errors=args.max_parse_errors)
+                        records_iterator = parser_func(
+                            local_path, max_errors=args.max_parse_errors
+                        )
                     else:
                         # For plain text files, the parser takes a file stream
                         f = open(local_path, "r", encoding="utf-8")
-                        records_iterator = parser_func(f, max_errors=args.max_parse_errors)
+                        records_iterator = parser_func(
+                            f, max_errors=args.max_parse_errors
+                        )
 
                     counted_records = count_iterator(records_iterator, record_counter)
                     byte_iterator = config["transformer"](counted_records)
                     loader.bulk_load(config["staging_table"], byte_iterator)
 
-                    logging.info(f"Finished loading data into {config['staging_table']}.")
-                    logging.info(f"Extracted and loaded {record_counter.value} records.")
+                    logging.info(
+                        f"Finished loading data into {config['staging_table']}."
+                    )
+                    logging.info(
+                        f"Extracted and loaded {record_counter.value} records."
+                    )
                     total_records_extracted += record_counter.value
                     total_records_loaded += record_counter.value
 

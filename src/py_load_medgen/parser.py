@@ -1,5 +1,8 @@
-from dataclasses import dataclass
-from typing import Optional
+import gzip
+import logging
+from dataclasses import dataclass, fields
+from pathlib import Path
+from typing import IO, Iterator, Optional
 
 
 @dataclass(frozen=True)
@@ -30,17 +33,10 @@ class MrconsoRecord:
     cvf: Optional[str]
     raw_record: str
 
-
-import logging
-from pathlib import Path
-from typing import IO, Iterator
-
 # Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-
-
-import gzip
-from dataclasses import fields
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
 @dataclass(frozen=True)
@@ -68,7 +64,10 @@ class MedgenHpoMapping:
 
 
 def _dataclass_to_tsv(record) -> bytes:
-    """Converts a dataclass instance to a UTF-8 encoded TSV line, sanitizing the raw_record field."""
+    """
+    Converts a dataclass instance to a UTF-8 encoded TSV line, sanitizing the
+    raw_record field.
+    """
     values = []
     for field in fields(record):
         value = getattr(record, field.name)
@@ -81,19 +80,28 @@ def _dataclass_to_tsv(record) -> bytes:
 
 
 def stream_mrconso_tsv(records: Iterator[MrconsoRecord]) -> Iterator[bytes]:
-    """Transforms an iterator of MrconsoRecord objects into a streaming iterator of UTF-8 encoded TSV lines."""
+    """
+    Transforms an iterator of MrconsoRecord objects into a streaming iterator of
+    UTF-8 encoded TSV lines.
+    """
     for record in records:
         yield _dataclass_to_tsv(record)
 
 
 def stream_names_tsv(records: Iterator[MedgenName]) -> Iterator[bytes]:
-    """Transforms an iterator of MedgenName objects into a streaming iterator of UTF-8 encoded TSV lines."""
+    """
+    Transforms an iterator of MedgenName objects into a streaming iterator of UTF-8
+    encoded TSV lines.
+    """
     for record in records:
         yield _dataclass_to_tsv(record)
 
 
 def stream_hpo_mapping_tsv(records: Iterator[MedgenHpoMapping]) -> Iterator[bytes]:
-    """Transforms an iterator of MedgenHpoMapping objects into a streaming iterator of UTF-8 encoded TSV lines."""
+    """
+    Transforms an iterator of MedgenHpoMapping objects into a streaming iterator
+    of UTF-8 encoded TSV lines.
+    """
     for record in records:
         yield _dataclass_to_tsv(record)
 
@@ -116,13 +124,19 @@ def parse_mrconso(file_stream: IO[str], max_errors: int) -> Iterator[MrconsoReco
             continue
 
         row = raw_line.split("|")
-        if len(row) < 19: # A valid RRF row with 18 fields will have 19 elements after splitting on the trailing pipe
+        if len(
+            row
+        ) < 19:  # A valid RRF row with 18 fields will have 19 elements after
+            # splitting on the trailing pipe
             error_count += 1
             logging.warning(
-                f"Skipping malformed row {i+1}: expected 18 columns, found {len(row) - 1}"
+                f"Skipping malformed row {i+1}: expected 18 columns, "
+                f"found {len(row) - 1}"
             )
             if error_count > max_errors:
-                raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
+                raise ValueError(
+                    f"Exceeded maximum parsing errors ({max_errors}). Aborting."
+                )
             continue
 
         try:
@@ -151,7 +165,9 @@ def parse_mrconso(file_stream: IO[str], max_errors: int) -> Iterator[MrconsoReco
             error_count += 1
             logging.warning(f"Skipping malformed row {i+1}: not enough columns.")
             if error_count > max_errors:
-                raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
+                raise ValueError(
+                    f"Exceeded maximum parsing errors ({max_errors}). Aborting."
+                )
 
 
 def parse_names(file_path: Path, max_errors: int) -> Iterator[MedgenName]:
@@ -180,10 +196,13 @@ def parse_names(file_path: Path, max_errors: int) -> Iterator[MedgenName]:
             if len(row) < 5:
                 error_count += 1
                 logging.warning(
-                    f"Skipping malformed row {i+1} in NAMES.RRF: expected 4 columns, found {len(row) - 1}"
+                    f"Skipping malformed row {i+1} in NAMES.RRF: "
+                    f"expected 4 columns, found {len(row) - 1}"
                 )
                 if error_count > max_errors:
-                    raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
+                    raise ValueError(
+                        f"Exceeded maximum parsing errors ({max_errors}). Aborting."
+                    )
                 continue
 
             yield MedgenName(
@@ -209,7 +228,9 @@ def parse_hpo_mapping(file_path: Path, max_errors: int) -> Iterator[MedgenHpoMap
     error_count = 0
     with gzip.open(file_path, "rt", encoding="utf-8") as f:
         first_line = f.readline()
-        if not first_line.lower().startswith("#cui") and not first_line.lower().startswith("cui"):
+        if not first_line.lower().startswith(
+            "#cui"
+        ) and not first_line.lower().startswith("cui"):
             f.seek(0)
 
         for i, line in enumerate(f):
@@ -225,7 +246,9 @@ def parse_hpo_mapping(file_path: Path, max_errors: int) -> Iterator[MedgenHpoMap
                     f"expected 6 columns, found {len(row)}"
                 )
                 if error_count > max_errors:
-                    raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
+                    raise ValueError(
+                        f"Exceeded maximum parsing errors ({max_errors}). Aborting."
+                    )
                 continue
 
             yield MedgenHpoMapping(
@@ -267,7 +290,10 @@ class MrrelRecord:
 
 
 def stream_mrrel_tsv(records: Iterator[MrrelRecord]) -> Iterator[bytes]:
-    """Transforms an iterator of MrrelRecord objects into a streaming iterator of UTF-8 encoded TSV lines."""
+    """
+    Transforms an iterator of MrrelRecord objects into a streaming iterator of
+    UTF-8 encoded TSV lines.
+    """
     for record in records:
         yield _dataclass_to_tsv(record)
 
@@ -293,10 +319,13 @@ def parse_mrrel(file_stream: IO[str], max_errors: int) -> Iterator[MrrelRecord]:
         if len(row) < 17:
             error_count += 1
             logging.warning(
-                f"Skipping malformed row {i+1} in MRREL.RRF: expected 16 columns, found {len(row) - 1}"
+                f"Skipping malformed row {i+1} in MRREL.RRF: "
+                f"expected 16 columns, found {len(row) - 1}"
             )
             if error_count > max_errors:
-                raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
+                raise ValueError(
+                    f"Exceeded maximum parsing errors ({max_errors}). Aborting."
+                )
             continue
 
         try:
@@ -321,9 +350,13 @@ def parse_mrrel(file_stream: IO[str], max_errors: int) -> Iterator[MrrelRecord]:
             )
         except IndexError:
             error_count += 1
-            logging.warning(f"Skipping malformed row {i+1} in MRREL.RRF: not enough columns.")
+            logging.warning(
+                f"Skipping malformed row {i+1} in MRREL.RRF: not enough columns."
+            )
             if error_count > max_errors:
-                raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
+                raise ValueError(
+                    f"Exceeded maximum parsing errors ({max_errors}). Aborting."
+                )
 
 
 @dataclass(frozen=True)
@@ -344,7 +377,10 @@ class MrstyRecord:
 
 
 def stream_mrsty_tsv(records: Iterator[MrstyRecord]) -> Iterator[bytes]:
-    """Transforms an iterator of MrstyRecord objects into a streaming iterator of UTF-8 encoded TSV lines."""
+    """
+    Transforms an iterator of MrstyRecord objects into a streaming iterator of
+    UTF-8 encoded TSV lines.
+    """
     for record in records:
         yield _dataclass_to_tsv(record)
 
@@ -370,10 +406,13 @@ def parse_mrsty(file_stream: IO[str], max_errors: int) -> Iterator[MrstyRecord]:
         if len(row) < 7:
             error_count += 1
             logging.warning(
-                f"Skipping malformed row {i+1} in MRSTY.RRF: expected 6 columns, found {len(row) - 1}"
+                f"Skipping malformed row {i+1} in MRSTY.RRF: "
+                f"expected 6 columns, found {len(row) - 1}"
             )
             if error_count > max_errors:
-                raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
+                raise ValueError(
+                    f"Exceeded maximum parsing errors ({max_errors}). Aborting."
+                )
             continue
 
         try:
@@ -388,9 +427,13 @@ def parse_mrsty(file_stream: IO[str], max_errors: int) -> Iterator[MrstyRecord]:
             )
         except IndexError:
             error_count += 1
-            logging.warning(f"Skipping malformed row {i+1} in MRSTY.RRF: not enough columns.")
+            logging.warning(
+                f"Skipping malformed row {i+1} in MRSTY.RRF: not enough columns."
+            )
             if error_count > max_errors:
-                raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
+                raise ValueError(
+                    f"Exceeded maximum parsing errors ({max_errors}). Aborting."
+                )
 
 
 @dataclass(frozen=True)
@@ -418,7 +461,10 @@ class MrsatRecord:
 
 
 def stream_mrsat_tsv(records: Iterator[MrsatRecord]) -> Iterator[bytes]:
-    """Transforms an iterator of MrsatRecord objects into a streaming iterator of UTF-8 encoded TSV lines."""
+    """
+    Transforms an iterator of MrsatRecord objects into a streaming iterator of
+    UTF-8 encoded TSV lines.
+    """
     for record in records:
         yield _dataclass_to_tsv(record)
 
@@ -441,14 +487,18 @@ def parse_mrsat(file_stream: IO[str], max_errors: int) -> Iterator[MrsatRecord]:
             continue
 
         row = raw_line.split("|")
-        # A valid RRF row with 13 fields will have 14 elements after splitting on the trailing pipe
+        # A valid RRF row with 13 fields will have 14 elements after splitting on
+        # the trailing pipe
         if len(row) < 14:
             error_count += 1
             logging.warning(
-                f"Skipping malformed row {i+1} in MRSAT.RRF: expected 13 columns, found {len(row) - 1}"
+                f"Skipping malformed row {i+1} in MRSAT.RRF: "
+                f"expected 13 columns, found {len(row) - 1}"
             )
             if error_count > max_errors:
-                raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
+                raise ValueError(
+                    f"Exceeded maximum parsing errors ({max_errors}). Aborting."
+                )
             continue
 
         try:
@@ -470,6 +520,10 @@ def parse_mrsat(file_stream: IO[str], max_errors: int) -> Iterator[MrsatRecord]:
             )
         except IndexError:
             error_count += 1
-            logging.warning(f"Skipping malformed row {i+1} in MRSAT.RRF: not enough columns.")
+            logging.warning(
+                f"Skipping malformed row {i+1} in MRSAT.RRF: not enough columns."
+            )
             if error_count > max_errors:
-                raise ValueError(f"Exceeded maximum parsing errors ({max_errors}). Aborting.")
+                raise ValueError(
+                    f"Exceeded maximum parsing errors ({max_errors}). Aborting."
+                )

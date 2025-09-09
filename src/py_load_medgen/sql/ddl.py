@@ -34,7 +34,9 @@ CREATE TABLE IF NOT EXISTS etl_run_details (
 );
 """
 
-ETL_RUN_DETAILS_INDEX_DDL = "CREATE INDEX IF NOT EXISTS idx_etl_run_details_log_id ON etl_run_details (log_id);"
+ETL_RUN_DETAILS_INDEX_DDL = (
+    "CREATE INDEX IF NOT EXISTS idx_etl_run_details_log_id ON etl_run_details (log_id);"
+)
 
 
 # --- DDL for Staging Tables ---
@@ -117,7 +119,8 @@ PRODUCTION_MEDGEN_RELATIONSHIPS_INDEXES_DDL = [
     "CREATE INDEX IF NOT EXISTS idx_{table_name}_cui2 ON {table_name} (cui2);",
     "CREATE INDEX IF NOT EXISTS idx_{table_name}_rel ON {table_name} (rel);",
     "CREATE INDEX IF NOT EXISTS idx_{table_name}_sab ON {table_name} (sab);",
-    "CREATE INDEX IF NOT EXISTS idx_{table_name}_is_active ON {table_name} (is_active);",
+    "CREATE INDEX IF NOT EXISTS idx_{table_name}_is_active "
+    "ON {table_name} (is_active);",
 ]
 
 # --- DDL for HPO Mapping ---
@@ -152,7 +155,8 @@ CREATE TABLE IF NOT EXISTS {table_name} (
 PRODUCTION_MEDGEN_HPO_MAPPING_INDEXES_DDL = [
     "CREATE INDEX IF NOT EXISTS idx_{table_name}_cui ON {table_name} (cui);",
     "CREATE INDEX IF NOT EXISTS idx_{table_name}_sdui ON {table_name} (sdui);",
-    "CREATE INDEX IF NOT EXISTS idx_{table_name}_is_active ON {table_name} (is_active);",
+    "CREATE INDEX IF NOT EXISTS idx_{table_name}_is_active "
+    "ON {table_name} (is_active);",
 ]
 
 # --- DDL for Semantic Types ---
@@ -187,7 +191,8 @@ CREATE TABLE IF NOT EXISTS {table_name} (
 PRODUCTION_SEMANTIC_TYPES_INDEXES_DDL = [
     "CREATE INDEX IF NOT EXISTS idx_{table_name}_cui ON {table_name} (cui);",
     "CREATE INDEX IF NOT EXISTS idx_{table_name}_tui ON {table_name} (tui);",
-    "CREATE INDEX IF NOT EXISTS idx_{table_name}_is_active ON {table_name} (is_active);",
+    "CREATE INDEX IF NOT EXISTS idx_{table_name}_is_active "
+    "ON {table_name} (is_active);",
 ]
 
 
@@ -227,8 +232,10 @@ CREATE TABLE IF NOT EXISTS {table_name} (
 
 PRODUCTION_MEDGEN_SOURCES_INDEXES_DDL = [
     "CREATE INDEX IF NOT EXISTS idx_{table_name}_cui ON {table_name} (cui);",
-    "CREATE INDEX IF NOT EXISTS idx_{table_name}_source_attr ON {table_name} (source_abbreviation, attribute_name);",
-    "CREATE INDEX IF NOT EXISTS idx_{table_name}_is_active ON {table_name} (is_active);",
+    "CREATE INDEX IF NOT EXISTS idx_{table_name}_source_attr "
+    "ON {table_name} (source_abbreviation, attribute_name);",
+    "CREATE INDEX IF NOT EXISTS idx_{table_name}_is_active "
+    "ON {table_name} (is_active);",
 ]
 
 
@@ -253,7 +260,8 @@ CREATE TABLE IF NOT EXISTS {table_name} (
 # These are created after data loading for better performance.
 PRODUCTION_NAMES_INDEXES_DDL = [
     "CREATE INDEX IF NOT EXISTS idx_{table_name}_cui ON {table_name} (cui);",
-    "CREATE INDEX IF NOT EXISTS idx_{table_name}_is_active ON {table_name} (is_active);",
+    "CREATE INDEX IF NOT EXISTS idx_{table_name}_is_active "
+    "ON {table_name} (is_active);",
 ]
 
 
@@ -290,7 +298,8 @@ PRODUCTION_CONCEPTS_INDEXES_DDL = [
     "CREATE INDEX IF NOT EXISTS idx_{table_name}_cui ON {table_name} (cui);",
     "CREATE UNIQUE INDEX IF NOT EXISTS uidx_{table_name}_aui ON {table_name} (aui);",
     "CREATE INDEX IF NOT EXISTS idx_{table_name}_sab_code ON {table_name} (sab, code);",
-    "CREATE INDEX IF NOT EXISTS idx_{table_name}_is_active ON {table_name} (is_active);",
+    "CREATE INDEX IF NOT EXISTS idx_{table_name}_is_active "
+    "ON {table_name} (is_active);",
 ]
 
 STAGING_NAMES_DDL = """
