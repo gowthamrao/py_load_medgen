@@ -4,7 +4,7 @@ from unittest.mock import ANY, MagicMock
 
 import pytest
 
-from py_load_medgen.downloader import Downloader
+from py_load_medgen.downloader import ChecksumsNotFoundError, Downloader
 
 
 def test_downloader_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -115,6 +115,21 @@ def test_downloader_checksum_verification(
     # Assert that the corrupted file was cleaned up
     assert not local_filepath_fail.exists()
 
+    # --- Test Case 3: Verification skipped if checksum for file is missing ---
+    # 2. Arrange
+    mock_ftp_instance.reset_mock()
+    mock_ftp_instance.retrlines.side_effect = fake_retrlines # re-apply
+    mock_ftp_instance.retrbinary.side_effect = fake_retrbinary # re-apply
+
+    local_filepath_missing = tmp_path / "another_file.txt"
+
+    # 3. Act & Assert
+    with Downloader() as downloader:
+        checksums = downloader.get_checksums("md5sum.txt") # checksums dict will not have 'another_file.txt'
+        # The new behavior should raise an error if the checksum is missing.
+        with pytest.raises(ValueError, match="No checksum found for 'another_file.txt'"):
+            downloader.download_file("another_file.txt", local_filepath_missing, checksums)
+
 
 def test_get_release_version(monkeypatch: pytest.MonkeyPatch) -> None:
     """
@@ -194,3 +209,64 @@ def test_downloader_resume_download(
     # Check that the file now contains the full, combined content
     expected_content = partial_content + b"-rest-of-data"
     assert local_filepath.read_bytes() == expected_content
+
+
+def test_get_checksums_raises_error_when_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Tests that get_checksums raises ChecksumsNotFoundError if the checksum
+    file is not found on the FTP server.
+    """
+    # 1. Arrange
+    mock_ftp_instance = MagicMock()
+    # Simulate an FTP error (e.g., 550 File not found)
+    mock_ftp_instance.retrlines.side_effect = ftplib.error_perm(
+        "550 No such file or directory."
+    )
+    monkeypatch.setattr(ftplib, "FTP", MagicMock(return_value=mock_ftp_instance))
+
+    # 2. Act & Assert
+    with Downloader() as downloader:
+        with pytest.raises(
+            ChecksumsNotFoundError, match="Could not find or parse checksum file"
+        ):
+            downloader.get_checksums("md5sum.txt")
+
+    # 3. Assert that the underlying FTP command was called
+    mock_ftp_instance.retrlines.assert_called_once_with("RETR md5sum.txt", ANY)
+
+
+def test_download_succeeds_with_no_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Tests that a download succeeds without error if no checksums are provided
+    (i.e., the --no-verify flag is used).
+    """
+    # 1. Arrange
+    mock_ftp_instance = MagicMock()
+
+    def fake_retrbinary(command, callback, rest=None):
+        callback(b'some-data')
+
+    mock_ftp_instance.retrbinary.side_effect = fake_retrbinary
+    monkeypatch.setattr(ftplib, "FTP", MagicMock(return_value=mock_ftp_instance))
+
+    local_filepath = tmp_path / "unverified_file.txt"
+
+    # 2. Act
+    # No exception should be raised here.
+    with Downloader() as downloader:
+        downloader.download_file("unverified_file.txt", local_filepath, checksums=None)
+
+    # 3. Assert
+    # The file should exist and have the downloaded content.
+    assert local_filepath.exists()
+    assert local_filepath.read_text() == "some-data"
+    # Crucially, verify_file should NOT have been called. We can test this by
+    # mocking it on the downloader instance.
+    with Downloader() as downloader:
+        downloader.verify_file = MagicMock()
+        downloader.download_file("unverified_file.txt", local_filepath, checksums=None)
+        downloader.verify_file.assert_not_called()
