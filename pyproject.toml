@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "py-load-medgen"
+name = "py_load_medgen"
 version = "0.1.0"
 authors = [
   { name="Gowtham Rao", email="rao@ohdsi.org" },
@@ -29,7 +29,7 @@ docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
 "Bug Tracker" = "https://github.com/ohdsi/py-load-medgen/issues"
 
 [project.scripts]
-py-load-medgen = "py_load_medgen.cli:main"
+py_load_medgen = "py_load_medgen.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
