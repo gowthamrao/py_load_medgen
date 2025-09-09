@@ -123,7 +123,7 @@ def parse_mrconso(file_stream: IO[str], max_errors: int) -> Iterator[MrconsoReco
         if not raw_line:
             continue
 
-        row = raw_line.split("|")
+        row = [field.strip() for field in raw_line.split("|")]
         if len(
             row
         ) < 19:  # A valid RRF row with 18 fields will have 19 elements after
@@ -192,7 +192,7 @@ def parse_names(file_path: Path, max_errors: int) -> Iterator[MedgenName]:
             if not raw_line:
                 continue
 
-            row = raw_line.split("|")
+            row = [field.strip() for field in raw_line.split("|")]
             if len(row) < 5:
                 error_count += 1
                 logging.warning(
@@ -238,7 +238,7 @@ def parse_hpo_mapping(file_path: Path, max_errors: int) -> Iterator[MedgenHpoMap
             if not raw_line:
                 continue
 
-            row = raw_line.split("\t")
+            row = [field.strip() for field in raw_line.split("\t")]
             if len(row) != 6:
                 error_count += 1
                 logging.warning(
@@ -315,7 +315,7 @@ def parse_mrrel(file_stream: IO[str], max_errors: int) -> Iterator[MrrelRecord]:
         if not raw_line:
             continue
 
-        row = raw_line.split("|")
+        row = [field.strip() for field in raw_line.split("|")]
         if len(row) < 17:
             error_count += 1
             logging.warning(
@@ -402,7 +402,7 @@ def parse_mrsty(file_stream: IO[str], max_errors: int) -> Iterator[MrstyRecord]:
         if not raw_line:
             continue
 
-        row = raw_line.split("|")
+        row = [field.strip() for field in raw_line.split("|")]
         if len(row) < 7:
             error_count += 1
             logging.warning(
@@ -486,7 +486,7 @@ def parse_mrsat(file_stream: IO[str], max_errors: int) -> Iterator[MrsatRecord]:
         if not raw_line:
             continue
 
-        row = raw_line.split("|")
+        row = [field.strip() for field in raw_line.split("|")]
         # A valid RRF row with 13 fields will have 14 elements after splitting on
         # the trailing pipe
         if len(row) < 14:
