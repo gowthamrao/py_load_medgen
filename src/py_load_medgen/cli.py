@@ -45,10 +45,42 @@ from py_load_medgen.sql.ddl import (
     STAGING_SEMANTIC_TYPES_DDL,
 )
 
+from py_load_medgen.logging import JsonFormatter
+
+def setup_logging():
+    """
+    Configures logging based on the LOG_FORMAT environment variable.
+    Defaults to standard text-based logging. If LOG_FORMAT=json, uses
+    structured JSON logging.
+    """
+    log_format = os.environ.get("LOG_FORMAT", "text").lower()
+
+    # Get the root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    # Remove any existing handlers
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+
+    # Create a new handler
+    handler = logging.StreamHandler(sys.stdout)
+
+    if log_format == "json":
+        formatter = JsonFormatter()
+        handler.setFormatter(formatter)
+    else:
+        formatter = logging.Formatter(
+            "%(asctime)s - %(levelname)s - %(message)s"
+        )
+        handler.setFormatter(formatter)
+
+    root_logger.addHandler(handler)
+
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
+# logging.basicConfig(
+#     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+# )
 
 # --- Constants ---
 NCBI_FTP_HOST = "ftp.ncbi.nlm.nih.gov"
@@ -151,6 +183,7 @@ ETL_CONFIG: list[EtlFileConfig] = [
 
 def main():
     """Main CLI entry point for the MedGen ETL tool."""
+    setup_logging()
     parser = argparse.ArgumentParser(
         description="A CLI tool for loading NCBI MedGen data into a database."
     )
