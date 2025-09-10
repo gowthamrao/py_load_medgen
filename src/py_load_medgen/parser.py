@@ -1,18 +1,28 @@
+import csv
 import gzip
 import logging
 from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import IO, Iterator, Optional
+from typing import IO, Iterator, Optional, List, Dict
+
+from py_load_medgen.schemas import (
+    MRCONSO_RRF_SCHEMA,
+    NAMES_RRF_SCHEMA,
+    MEDGEN_HPO_MAPPING_SCHEMA,
+    MRREL_RRF_SCHEMA,
+    MRSTY_RRF_SCHEMA,
+    MRSAT_RRF_SCHEMA,
+)
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+)
 
 
+# --- Dataclass Definitions ---
 @dataclass(frozen=True)
 class MrconsoRecord:
-    """
-    Represents a single record from the MRCONSO.RRF file.
-    Field names correspond to the columns defined in the UMLS Reference Manual.
-    See: https://www.ncbi.nlm.nih.gov/books/NBK9685/
-    """
-
     cui: str
     lat: str
     ts: str
@@ -33,16 +43,9 @@ class MrconsoRecord:
     cvf: Optional[str]
     raw_record: str
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
-
 
 @dataclass(frozen=True)
 class MedgenName:
-    """Represents a single record from the NAMES.RRF file."""
-
     cui: str
     name: str
     source: str
@@ -52,8 +55,6 @@ class MedgenName:
 
 @dataclass(frozen=True)
 class MedgenHpoMapping:
-    """Represents a single record from the MedGen_HPO_Mapping.txt.gz file."""
-
     cui: str
     sdui: str
     hpo_str: str
@@ -63,213 +64,8 @@ class MedgenHpoMapping:
     raw_record: str
 
 
-def _dataclass_to_tsv(record) -> bytes:
-    """
-    Converts a dataclass instance to a UTF-8 encoded TSV line, sanitizing the
-    raw_record field.
-    """
-    values = []
-    for field in fields(record):
-        value = getattr(record, field.name)
-        if field.name == "raw_record" and isinstance(value, str):
-            # Replace tabs and newlines in raw_record to not break the TSV format
-            value = value.replace("\t", " ").replace("\n", " ")
-        values.append(str(value or r"\N"))
-    line = "\t".join(values)
-    return (line + "\n").encode("utf-8")
-
-
-def stream_mrconso_tsv(records: Iterator[MrconsoRecord]) -> Iterator[bytes]:
-    """
-    Transforms an iterator of MrconsoRecord objects into a streaming iterator of
-    UTF-8 encoded TSV lines.
-    """
-    for record in records:
-        yield _dataclass_to_tsv(record)
-
-
-def stream_names_tsv(records: Iterator[MedgenName]) -> Iterator[bytes]:
-    """
-    Transforms an iterator of MedgenName objects into a streaming iterator of UTF-8
-    encoded TSV lines.
-    """
-    for record in records:
-        yield _dataclass_to_tsv(record)
-
-
-def stream_hpo_mapping_tsv(records: Iterator[MedgenHpoMapping]) -> Iterator[bytes]:
-    """
-    Transforms an iterator of MedgenHpoMapping objects into a streaming iterator
-    of UTF-8 encoded TSV lines.
-    """
-    for record in records:
-        yield _dataclass_to_tsv(record)
-
-
-def parse_mrconso(file_stream: IO[str], max_errors: int) -> Iterator[MrconsoRecord]:
-    """
-    Parses a pipe-delimited MRCONSO.RRF file stream.
-    Args:
-        file_stream: A text file-like object containing MRCONSO.RRF data.
-        max_errors: The maximum number of parsing errors to tolerate.
-    Yields:
-        MrconsoRecord instances for each valid row in the file.
-    Raises:
-        ValueError: If the number of parsing errors exceeds max_errors.
-    """
-    error_count = 0
-    for i, line in enumerate(file_stream):
-        raw_line = line.strip()
-        if not raw_line:
-            continue
-
-        row = [field.strip() for field in raw_line.split("|")]
-        if len(
-            row
-        ) < 19:  # A valid RRF row with 18 fields will have 19 elements after
-            # splitting on the trailing pipe
-            error_count += 1
-            logging.warning(
-                f"Skipping malformed row {i+1}: expected 18 columns, "
-                f"found {len(row) - 1}"
-            )
-            if error_count > max_errors:
-                raise ValueError(
-                    f"Exceeded maximum parsing errors ({max_errors}). Aborting."
-                )
-            continue
-
-        try:
-            yield MrconsoRecord(
-                cui=row[0],
-                lat=row[1],
-                ts=row[2],
-                lui=row[3],
-                stt=row[4],
-                sui=row[5],
-                ispref=row[6],
-                aui=row[7],
-                saui=row[8] if row[8] else None,
-                scui=row[9] if row[9] else None,
-                sdui=row[10] if row[10] else None,
-                sab=row[11],
-                tty=row[12],
-                code=row[13],
-                record_str=row[14],
-                srl=row[15],
-                suppress=row[16],
-                cvf=row[17] if row[17] else None,
-                raw_record=raw_line,
-            )
-        except IndexError:
-            error_count += 1
-            logging.warning(f"Skipping malformed row {i+1}: not enough columns.")
-            if error_count > max_errors:
-                raise ValueError(
-                    f"Exceeded maximum parsing errors ({max_errors}). Aborting."
-                )
-
-
-def parse_names(file_path: Path, max_errors: int) -> Iterator[MedgenName]:
-    """
-    Parses a gzipped, pipe-delimited NAMES.RRF.gz file.
-    Args:
-        file_path: Path to the gzipped file.
-        max_errors: The maximum number of parsing errors to tolerate.
-    Yields:
-        MedgenName instances for each valid row in the file.
-    Raises:
-        ValueError: If the number of parsing errors exceeds max_errors.
-    """
-    error_count = 0
-    with gzip.open(file_path, "rt", encoding="utf-8") as f:
-        header = f.readline()
-        if not header.startswith("#CUI"):
-            logging.warning("NAMES.RRF file does not have the expected header.")
-
-        for i, line in enumerate(f):
-            raw_line = line.strip()
-            if not raw_line:
-                continue
-
-            row = [field.strip() for field in raw_line.split("|")]
-            if len(row) < 5:
-                error_count += 1
-                logging.warning(
-                    f"Skipping malformed row {i+1} in NAMES.RRF: "
-                    f"expected 4 columns, found {len(row) - 1}"
-                )
-                if error_count > max_errors:
-                    raise ValueError(
-                        f"Exceeded maximum parsing errors ({max_errors}). Aborting."
-                    )
-                continue
-
-            yield MedgenName(
-                cui=row[0],
-                name=row[1],
-                source=row[2],
-                suppress=row[3],
-                raw_record=raw_line,
-            )
-
-
-def parse_hpo_mapping(file_path: Path, max_errors: int) -> Iterator[MedgenHpoMapping]:
-    """
-    Parses a gzipped, tab-delimited MedGen_HPO_Mapping.txt.gz file.
-    Args:
-        file_path: Path to the gzipped file.
-        max_errors: The maximum number of parsing errors to tolerate.
-    Yields:
-        MedgenHpoMapping instances for each valid row in the file.
-    Raises:
-        ValueError: If the number of parsing errors exceeds max_errors.
-    """
-    error_count = 0
-    with gzip.open(file_path, "rt", encoding="utf-8") as f:
-        first_line = f.readline()
-        if not first_line.lower().startswith(
-            "#cui"
-        ) and not first_line.lower().startswith("cui"):
-            f.seek(0)
-
-        for i, line in enumerate(f):
-            raw_line = line.strip()
-            if not raw_line:
-                continue
-
-            row = [field.strip() for field in raw_line.split("\t")]
-            if len(row) != 6:
-                error_count += 1
-                logging.warning(
-                    f"Skipping malformed row {i+1} in HPO Mapping file: "
-                    f"expected 6 columns, found {len(row)}"
-                )
-                if error_count > max_errors:
-                    raise ValueError(
-                        f"Exceeded maximum parsing errors ({max_errors}). Aborting."
-                    )
-                continue
-
-            yield MedgenHpoMapping(
-                cui=row[0],
-                sdui=row[1],
-                hpo_str=row[2],
-                medgen_str=row[3],
-                medgen_str_sab=row[4],
-                sty=row[5],
-                raw_record=raw_line,
-            )
-
-
 @dataclass(frozen=True)
 class MrrelRecord:
-    """
-    Represents a single record from the MRREL.RRF file.
-    Field names correspond to the columns defined in the UMLS Reference Manual.
-    See: https://www.ncbi.nlm.nih.gov/books/NBK9685/table/ch03.T.related_concepts_file_mrrel_rrf/
-    """
-
     cui1: str
     aui1: Optional[str]
     stype1: str
@@ -289,84 +85,8 @@ class MrrelRecord:
     raw_record: str
 
 
-def stream_mrrel_tsv(records: Iterator[MrrelRecord]) -> Iterator[bytes]:
-    """
-    Transforms an iterator of MrrelRecord objects into a streaming iterator of
-    UTF-8 encoded TSV lines.
-    """
-    for record in records:
-        yield _dataclass_to_tsv(record)
-
-
-def parse_mrrel(file_stream: IO[str], max_errors: int) -> Iterator[MrrelRecord]:
-    """
-    Parses a pipe-delimited MRREL.RRF file stream.
-    Args:
-        file_stream: A text file-like object containing MRREL.RRF data.
-        max_errors: The maximum number of parsing errors to tolerate.
-    Yields:
-        MrrelRecord instances for each valid row in the file.
-    Raises:
-        ValueError: If the number of parsing errors exceeds max_errors.
-    """
-    error_count = 0
-    for i, line in enumerate(file_stream):
-        raw_line = line.strip()
-        if not raw_line:
-            continue
-
-        row = [field.strip() for field in raw_line.split("|")]
-        if len(row) < 17:
-            error_count += 1
-            logging.warning(
-                f"Skipping malformed row {i+1} in MRREL.RRF: "
-                f"expected 16 columns, found {len(row) - 1}"
-            )
-            if error_count > max_errors:
-                raise ValueError(
-                    f"Exceeded maximum parsing errors ({max_errors}). Aborting."
-                )
-            continue
-
-        try:
-            yield MrrelRecord(
-                cui1=row[0],
-                aui1=row[1] if row[1] else None,
-                stype1=row[2],
-                rel=row[3],
-                cui2=row[4],
-                aui2=row[5] if row[5] else None,
-                stype2=row[6],
-                rela=row[7] if row[7] else None,
-                rui=row[8] if row[8] else None,
-                srui=row[9] if row[9] else None,
-                sab=row[10],
-                sl=row[11] if row[11] else None,
-                rg=row[12] if row[12] else None,
-                dir=row[13] if row[13] else None,
-                suppress=row[14],
-                cvf=row[15] if row[15] else None,
-                raw_record=raw_line,
-            )
-        except IndexError:
-            error_count += 1
-            logging.warning(
-                f"Skipping malformed row {i+1} in MRREL.RRF: not enough columns."
-            )
-            if error_count > max_errors:
-                raise ValueError(
-                    f"Exceeded maximum parsing errors ({max_errors}). Aborting."
-                )
-
-
 @dataclass(frozen=True)
 class MrstyRecord:
-    """
-    Represents a single record from the MRSTY.RRF file.
-    Field names correspond to the columns defined in the UMLS Reference Manual.
-    See: https://www.ncbi.nlm.nih.gov/books/NBK9685/table/ch03.Tf/
-    """
-
     cui: str
     tui: str
     stn: str
@@ -376,74 +96,8 @@ class MrstyRecord:
     raw_record: str
 
 
-def stream_mrsty_tsv(records: Iterator[MrstyRecord]) -> Iterator[bytes]:
-    """
-    Transforms an iterator of MrstyRecord objects into a streaming iterator of
-    UTF-8 encoded TSV lines.
-    """
-    for record in records:
-        yield _dataclass_to_tsv(record)
-
-
-def parse_mrsty(file_stream: IO[str], max_errors: int) -> Iterator[MrstyRecord]:
-    """
-    Parses a pipe-delimited MRSTY.RRF file stream.
-    Args:
-        file_stream: A text file-like object containing MRSTY.RRF data.
-        max_errors: The maximum number of parsing errors to tolerate.
-    Yields:
-        MrstyRecord instances for each valid row in the file.
-    Raises:
-        ValueError: If the number of parsing errors exceeds max_errors.
-    """
-    error_count = 0
-    for i, line in enumerate(file_stream):
-        raw_line = line.strip()
-        if not raw_line:
-            continue
-
-        row = [field.strip() for field in raw_line.split("|")]
-        if len(row) < 7:
-            error_count += 1
-            logging.warning(
-                f"Skipping malformed row {i+1} in MRSTY.RRF: "
-                f"expected 6 columns, found {len(row) - 1}"
-            )
-            if error_count > max_errors:
-                raise ValueError(
-                    f"Exceeded maximum parsing errors ({max_errors}). Aborting."
-                )
-            continue
-
-        try:
-            yield MrstyRecord(
-                cui=row[0],
-                tui=row[1],
-                stn=row[2],
-                sty=row[3],
-                atui=row[4] if row[4] else None,
-                cvf=row[5] if row[5] else None,
-                raw_record=raw_line,
-            )
-        except IndexError:
-            error_count += 1
-            logging.warning(
-                f"Skipping malformed row {i+1} in MRSTY.RRF: not enough columns."
-            )
-            if error_count > max_errors:
-                raise ValueError(
-                    f"Exceeded maximum parsing errors ({max_errors}). Aborting."
-                )
-
-
 @dataclass(frozen=True)
 class MrsatRecord:
-    """
-    Represents a single record from the MRSAT.RRF file.
-    Field names correspond to the columns defined in the UMLS Reference Manual.
-    See: https://www.ncbi.nlm.nih.gov/books/NBK9685/table/ch03.T.simple_concept_and_atom_attribute/
-    """
-
     cui: str
     lui: Optional[str]
     sui: Optional[str]
@@ -460,70 +114,189 @@ class MrsatRecord:
     raw_record: str
 
 
-def stream_mrsat_tsv(records: Iterator[MrsatRecord]) -> Iterator[bytes]:
-    """
-    Transforms an iterator of MrsatRecord objects into a streaming iterator of
-    UTF-8 encoded TSV lines.
-    """
+# --- Helper functions ---
+def _dataclass_to_tsv(record) -> bytes:
+    """Converts a dataclass instance to a UTF-8 encoded TSV line."""
+    values = []
+    for field in fields(record):
+        value = getattr(record, field.name)
+        if field.name == "raw_record" and isinstance(value, str):
+            value = value.replace("\t", " ").replace("\n", " ")
+        values.append(str(value or r"\N"))
+    line = "\t".join(values)
+    return (line + "\n").encode("utf-8")
+
+
+def stream_mrconso_tsv(records: Iterator[MrconsoRecord]) -> Iterator[bytes]:
     for record in records:
         yield _dataclass_to_tsv(record)
 
 
+def stream_names_tsv(records: Iterator[MedgenName]) -> Iterator[bytes]:
+    for record in records:
+        yield _dataclass_to_tsv(record)
+
+
+def stream_hpo_mapping_tsv(records: Iterator[MedgenHpoMapping]) -> Iterator[bytes]:
+    for record in records:
+        yield _dataclass_to_tsv(record)
+
+
+def stream_mrrel_tsv(records: Iterator[MrrelRecord]) -> Iterator[bytes]:
+    for record in records:
+        yield _dataclass_to_tsv(record)
+
+
+def stream_mrsty_tsv(records: Iterator[MrstyRecord]) -> Iterator[bytes]:
+    for record in records:
+        yield _dataclass_to_tsv(record)
+
+
+def stream_mrsat_tsv(records: Iterator[MrsatRecord]) -> Iterator[bytes]:
+    for record in records:
+        yield _dataclass_to_tsv(record)
+
+
+def _handle_parsing_error(
+    error_count: int, max_errors: int, line_num: int, filename: str, message: str
+) -> int:
+    """Centralized error logging and counting for parsers."""
+    logging.warning(f"Skipping malformed row {line_num} in {filename}: {message}")
+    error_count += 1
+    if error_count > max_errors:
+        raise ValueError(
+            f"Exceeded maximum parsing errors ({max_errors}) in {filename}. Aborting."
+        )
+    return error_count
+
+
+def _populate_optional_fields(record_dict: Dict, record_class: type) -> Dict:
+    """Converts empty strings to None for fields marked as Optional in the dataclass."""
+    for f in fields(record_class):
+        if f.type == Optional[str] and f.name in record_dict:
+            if not record_dict[f.name]:
+                record_dict[f.name] = None
+    return record_dict
+
+
+def _parse_pipe_delimited(file_stream: IO[str], schema: List[str], record_class: type, filename: str, max_errors: int) -> Iterator:
+    """Generic parser for pipe-delimited files, handling trailing delimiters."""
+    error_count = 0
+    num_fields = len(schema)
+
+    for i, line in enumerate(file_stream, start=1):
+        raw_record = line.rstrip('\r\n')
+        processing_line = line.strip()
+        if not processing_line:
+            continue
+
+        row = next(csv.reader([processing_line], delimiter="|", quoting=csv.QUOTE_NONE))
+
+        if len(row) > num_fields:
+            if all(f == "" for f in row[num_fields:]):
+                row = row[:num_fields]
+
+        if len(row) != num_fields:
+            error_count = _handle_parsing_error(
+                error_count, max_errors, i, filename,
+                f"expected {num_fields} columns, found {len(row)}"
+            )
+            continue
+
+        record_dict = dict(zip(schema, (field.strip() for field in row)))
+        record_dict["raw_record"] = raw_record
+        record_dict = _populate_optional_fields(record_dict, record_class)
+        yield record_class(**record_dict)
+
+
+def parse_mrconso(file_stream: IO[str], max_errors: int) -> Iterator[MrconsoRecord]:
+    yield from _parse_pipe_delimited(file_stream, MRCONSO_RRF_SCHEMA, MrconsoRecord, "MRCONSO.RRF", max_errors)
+
+
+def parse_mrrel(file_stream: IO[str], max_errors: int) -> Iterator[MrrelRecord]:
+    yield from _parse_pipe_delimited(file_stream, MRREL_RRF_SCHEMA, MrrelRecord, "MRREL.RRF", max_errors)
+
+
+def parse_mrsty(file_stream: IO[str], max_errors: int) -> Iterator[MrstyRecord]:
+    yield from _parse_pipe_delimited(file_stream, MRSTY_RRF_SCHEMA, MrstyRecord, "MRSTY.RRF", max_errors)
+
+
 def parse_mrsat(file_stream: IO[str], max_errors: int) -> Iterator[MrsatRecord]:
+    yield from _parse_pipe_delimited(file_stream, MRSAT_RRF_SCHEMA, MrsatRecord, "MRSAT.RRF", max_errors)
+
+
+def parse_names(file_path: Path, max_errors: int) -> Iterator[MedgenName]:
     """
-    Parses a pipe-delimited MRSAT.RRF file stream.
-    Args:
-        file_stream: A text file-like object containing MRSAT.RRF data.
-        max_errors: The maximum number of parsing errors to tolerate.
-    Yields:
-        MrsatRecord instances for each valid row in the file.
-    Raises:
-        ValueError: If the number of parsing errors exceeds max_errors.
+    Parses a gzipped, pipe-delimited NAMES.RRF.gz file with resilience
+    to column reordering.
     """
     error_count = 0
-    for i, line in enumerate(file_stream):
-        raw_line = line.strip()
-        if not raw_line:
-            continue
+    with gzip.open(file_path, "rt", encoding="utf-8") as f:
+        header = f.readline().strip()
+        if header.startswith("#"):
+            header = header[1:]
 
-        row = [field.strip() for field in raw_line.split("|")]
-        # A valid RRF row with 13 fields will have 14 elements after splitting on
-        # the trailing pipe
-        if len(row) < 14:
-            error_count += 1
-            logging.warning(
-                f"Skipping malformed row {i+1} in MRSAT.RRF: "
-                f"expected 13 columns, found {len(row) - 1}"
-            )
-            if error_count > max_errors:
-                raise ValueError(
-                    f"Exceeded maximum parsing errors ({max_errors}). Aborting."
-                )
-            continue
+        fieldnames = [h.strip() for h in header.split("|") if h]
 
-        try:
-            yield MrsatRecord(
-                cui=row[0],
-                lui=row[1] if row[1] else None,
-                sui=row[2] if row[2] else None,
-                metaui=row[3] if row[3] else None,
-                stype=row[4],
-                code=row[5] if row[5] else None,
-                atui=row[6],
-                satui=row[7] if row[7] else None,
-                atn=row[8],
-                sab=row[9],
-                atv=row[10] if row[10] else None,
-                suppress=row[11],
-                cvf=row[12] if row[12] else None,
-                raw_record=raw_line,
-            )
-        except IndexError:
-            error_count += 1
-            logging.warning(
-                f"Skipping malformed row {i+1} in MRSAT.RRF: not enough columns."
-            )
-            if error_count > max_errors:
-                raise ValueError(
-                    f"Exceeded maximum parsing errors ({max_errors}). Aborting."
+        for i, line in enumerate(f, start=2):
+            raw_record = line.rstrip('\r\n')
+            processing_line = line.strip()
+            if not processing_line:
+                continue
+
+            reader = csv.DictReader([processing_line], fieldnames=fieldnames, delimiter="|", quoting=csv.QUOTE_NONE)
+
+            try:
+                record_dict = next(reader)
+            except StopIteration:
+                continue
+
+            if None in record_dict.values():
+                error_count = _handle_parsing_error(
+                    error_count, max_errors, i, "NAMES.RRF",
+                    f"incorrect number of columns. Expected {len(fieldnames)}."
                 )
+                continue
+
+            try:
+                # Filter out None keys which can be added by DictReader for extra values
+                normalized_dict = {k.lower(): v for k, v in record_dict.items() if k is not None}
+                normalized_dict["raw_record"] = raw_record
+                yield MedgenName(**normalized_dict)
+            except TypeError:
+                 error_count = _handle_parsing_error(
+                    error_count, max_errors, i, "NAMES.RRF",
+                    f"mismatched columns. Expected { {f.name for f in fields(MedgenName) if f.name != 'raw_record'} }. Got: {set(normalized_dict.keys())}"
+                )
+                 continue
+
+
+def parse_hpo_mapping(file_path: Path, max_errors: int) -> Iterator[MedgenHpoMapping]:
+    """Parses a gzipped, tab-delimited MedGen_HPO_Mapping.txt.gz file."""
+    error_count = 0
+    schema = MEDGEN_HPO_MAPPING_SCHEMA
+    num_fields = len(schema)
+
+    with gzip.open(file_path, "rt", encoding="utf-8") as f:
+        header = f.readline()
+        if not header.lower().startswith(("#cui", "cui")):
+            f.seek(0)
+
+        for i, line in enumerate(f, start=1):
+            raw_record = line.rstrip('\r\n')
+            processing_line = line.strip()
+            if not processing_line:
+                continue
+
+            row = next(csv.reader([processing_line], delimiter="\t", quoting=csv.QUOTE_NONE))
+
+            if len(row) != num_fields:
+                error_count = _handle_parsing_error(
+                    error_count, max_errors, i, "HPO_MAPPING",
+                    f"expected {num_fields} columns, found {len(row)}"
+                )
+                continue
+
+            record_dict = dict(zip(schema, (field.strip() for field in row)))
+            record_dict["raw_record"] = raw_record
+            yield MedgenHpoMapping(**record_dict)
