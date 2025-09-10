@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from py_load_medgen.parser import parse_mrconso, parse_names
+from py_load_medgen.parser import (
+    parse_mrconso,
+    parse_names,
+    parse_mrrel,
+    parse_mrsty,
+)
 
 
 def test_parse_names_exceeds_max_errors(tmp_path: Path):
@@ -60,20 +65,55 @@ def test_parse_names_within_max_errors(tmp_path: Path):
     assert len(records) == 3
 
 
-def test_parse_mrconso_exceeds_max_errors_index_error():
+def test_parse_mrconso_exceeds_max_errors(tmp_path):
     """
-    Tests that parse_mrconso raises a ValueError on an IndexError
-    when the error threshold is exceeded.
+    Tests that parse_mrconso raises a ValueError when the number of
+    malformed rows exceeds the max_errors threshold.
     """
-    # 1. Arrange: Create a stream where the second row will cause an IndexError
+    # 1. Arrange: Create a file with a malformed row (too few columns)
+    file_path = tmp_path / "MRCONSO.RRF"
     content_lines = [
         "C0000005|ENG|P|L0000005|PF|S0007492|Y|A26634265||M0019694|D012711|MSH|PEN|"
         "D012711|(131)I-Macroaggregated Albumin|0|N|256|",
         "C0000039|ENG|P|L0000039|PF|S0007563|Y|A26634304||M0023172|D015060|MSH|PEP|"
-        "D015060|1,2-Dipalmitoylphosphatidylcholine|3|N|",  # Missing one column
+        "D015060|1,2-Dipalmitoylphosphatidylcholine|3",  # Truly malformed row
+    ]
+    file_path.write_text("\n".join(content_lines))
+
+
+    # 2. Act & Assert: Set max_errors to 0 and expect a ValueError
+    with pytest.raises(ValueError, match="Exceeded maximum parsing errors"):
+        with open(file_path, "r") as f:
+            list(parse_mrconso(f, max_errors=0))
+
+
+def test_parse_mrrel_exceeds_max_errors():
+    """
+    Tests that parse_mrrel raises a ValueError when the error threshold is exceeded.
+    """
+    # 1. Arrange: A stream with one good row and one bad row
+    content_lines = [
+        "C0001175|A27478989|SCUI|RB|C0001290|A27478990|SCUI|SIDA|R222|S222|MSHFRE|MSHFRE|N|N|N|256|",
+        "C0001175|A27478989|SCUI|RB|C0001290|A27478990|SCUI",  # Malformed
     ]
     file_stream = io.StringIO("\n".join(content_lines))
 
     # 2. Act & Assert: Set max_errors to 0
     with pytest.raises(ValueError, match="Exceeded maximum parsing errors"):
-        list(parse_mrconso(file_stream, max_errors=0))
+        list(parse_mrrel(file_stream, max_errors=0))
+
+
+def test_parse_mrsty_exceeds_max_errors():
+    """
+    Tests that parse_mrsty raises a ValueError when the error threshold is exceeded.
+    """
+    # 1. Arrange: A stream with one good row and one bad row
+    content_lines = [
+        "C0000074|T033|B1.2.1.1|Finding|AT12345|CVF123|",
+        "C0000102|T061|B2.2.1.2.2",  # Malformed
+    ]
+    file_stream = io.StringIO("\n".join(content_lines))
+
+    # 2. Act & Assert: Set max_errors to 0
+    with pytest.raises(ValueError, match="Exceeded maximum parsing errors"):
+        list(parse_mrsty(file_stream, max_errors=0))
