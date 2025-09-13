@@ -21,7 +21,7 @@ dependencies = ["tenacity"]
 
 [project.optional-dependencies]
 postgres = ["psycopg[binary]"]
-test = ["pytest", "pytest-mock", "psycopg[binary]", "testcontainers[postgres]", "sqlalchemy", "psycopg2-binary"]
+test = ["pytest", "pytest-mock", "psycopg[binary]", "testcontainers[postgres]", "sqlalchemy", "psycopg2-binary", "pytest-cov"]
 docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
 
 [project.urls]
