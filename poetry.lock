@@ -1492,10 +1492,9 @@ files = [
 name = "typing-extensions"
 version = "4.15.0"
 description = "Backported and Experimental Type Hints for Python 3.9+"
-optional = true
+optional = false
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "(extra == \"postgres\" or extra == \"test\") and python_version < \"3.13\" or extra == \"test\" or extra == \"docs\" and python_version < \"3.11\""
 files = [
     {file = "typing_extensions-4.15.0-py3-none-any.whl", hash = "sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548"},
     {file = "typing_extensions-4.15.0.tar.gz", hash = "sha256:0cea48d173cc12fa28ecabc3b837ea3cf6f38c6d1136f85cbaaf598984861466"},
@@ -1698,4 +1697,4 @@ test = ["psycopg", "psycopg2-binary", "pytest", "pytest-cov", "pytest-mock", "sq
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.9"
-content-hash = "a97ca012a984edd146d99eff6b60e26d0f130927a7cf9d8e1bb13ee533a1da32"
+content-hash = "50a8346148e46a33ec84b052eff073a3f6f9fd2309df47aede3e340e1750bf63"
