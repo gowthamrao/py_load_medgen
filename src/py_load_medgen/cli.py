@@ -6,7 +6,13 @@ import traceback
 import uuid
 from importlib import metadata
 from pathlib import Path
-from typing import Any, Callable, Iterator, NotRequired, TypedDict, TypeVar
+import sys
+from typing import Any, Callable, Iterator, TypedDict, TypeVar
+
+if sys.version_info >= (3, 11):
+    from typing import NotRequired
+else:
+    from typing_extensions import NotRequired
 
 from py_load_medgen.downloader import ChecksumsNotFoundError, Downloader
 from py_load_medgen.loader.factory import LoaderFactory
