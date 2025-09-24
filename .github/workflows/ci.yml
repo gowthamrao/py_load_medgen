@@ -2,23 +2,27 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, develop ]
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     services:
-      # Docker-in-Docker service is required for testcontainers
+      # Docker-in-Docker service is required for testcontainers on Linux
       dind:
         image: docker:dind
         # privileged is required for dind
         options: --privileged
+        # Only run dind on Linux
+        if: runner.os == 'Linux'
 
     strategy:
+      fail-fast: false
       matrix:
         python-version: ["3.11", "3.12"]
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
     - name: Checkout code
@@ -28,17 +32,19 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: ${{ matrix.python-version }}
-
-    - name: Install Poetry
-      run: |
-        curl -sSL https://install.python-poetry.org | python3 -
-        echo "$HOME/.local/bin" >> $GITHUB_PATH
+        cache: 'poetry'
 
     - name: Install dependencies
       run: poetry install -E test -E docs
 
     - name: Run tests
-      # Set DOCKER_HOST to connect to the dind service
+      # Set DOCKER_HOST to connect to the dind service on Linux
       env:
-        DOCKER_HOST: tcp://dind:2375
-      run: poetry run pytest
+        DOCKER_HOST: ${{ runner.os == 'Linux' && 'tcp://dind:2375' || '' }}
+      run: poetry run pytest --cov=py_load_medgen --cov-report=xml
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        fail_ci_if_error: true
