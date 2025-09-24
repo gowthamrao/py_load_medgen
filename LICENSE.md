@@ -1,5 +1,5 @@
 Contributor: Gowtham Adamane Rao
-Source Code: https://github.com/ohdsi/py-load-medgen
+Source Code: https://github.com/gowthamrao/py_load_medgen
 
 The Prosperity Public License 3.0.0
 
@@ -9,7 +9,7 @@ This license allows you to use and share this software for noncommercial purpose
 
 # Agreement
 
-In order to receive this license, you have to agree to its rules. Those rules are both obligations under that agreement and conditions to your license. Don't do anything with this software that triggers a rule you can't or won't follow.
+In order to receive this license, you have to agree to its rules.  Those rules are both obligations under that agreement and conditions to your license.  Don't do anything with this software that triggers a rule you can't or won't follow.
 
 # Notices
 
@@ -17,11 +17,11 @@ Make sure everyone who gets a copy of any part of this software from you, with o
 
 # Commercial Trial
 
-Limit your use of this software for commercial purposes to a thirty-day trial period. If you use this software for work, your company gets one trial period for all personnel, not one trial per person.
+Limit your use of this software for commercial purposes to a thirty-day trial period.  If you use this software for work, your company gets one trial period for all personnel, not one trial per person.
 
 # Contributions Back
 
-Developing feedback, changes, or additions that you contribute back to the contributor on the terms of a standardized public software license such as the Blue Oak Model License 1.0.0, the Apache License 2.0, the MIT license, or the two-clause BSD license doesn't count as use for a commercial purpose.
+Developing feedback, changes, or additions that you contribute back to the contributor on the terms of a standardized public software license such as [the Blue Oak Model License 1.0.0](https://blueoakcouncil.org/license/1.0.0), [the Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0.html), [the MIT license](https://spdx.org/licenses/MIT.html), or [the two-clause BSD license](https://spdx.org/licenses/BSD-2-Clause.html) doesn't count as use for a commercial purpose.
 
 # Personal Uses
 
@@ -49,7 +49,7 @@ The contributor can't revoke this license.
 
 # Excuse
 
-You're excused for unknowingly breaking Notices if you take all practical steps to comply within thirty days of learning you broke the rule.
+You're excused for unknowingly breaking [Notices](#notices) if you take all practical steps to comply within thirty days of learning you broke the rule.
 
 # No Liability
 
