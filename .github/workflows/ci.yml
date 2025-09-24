@@ -28,10 +28,24 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-        cache: 'poetry'
+
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+        installer-parallel: true
+
+    - name: Load cached venv
+      id: cached-poetry-dependencies
+      uses: actions/cache@v4
+      with:
+        path: .venv
+        key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
 
     - name: Install dependencies
-      run: poetry install -E test -E docs
+      if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+      run: poetry install -E test -E docs --no-interaction --no-root
 
     - name: Run tests on Linux
       # Set DOCKER_HOST to connect to the dind service on Linux
@@ -61,10 +75,24 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-        cache: 'poetry'
+
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+        installer-parallel: true
+
+    - name: Load cached venv
+      id: cached-poetry-dependencies
+      uses: actions/cache@v4
+      with:
+        path: .venv
+        key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
 
     - name: Install dependencies
-      run: poetry install -E test -E docs
+      if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+      run: poetry install -E test -E docs --no-interaction --no-root
 
     - name: Run tests on ${{ matrix.os }}
       run: poetry run pytest --cov=py_load_medgen --cov-report=xml
