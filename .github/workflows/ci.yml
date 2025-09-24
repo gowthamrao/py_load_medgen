@@ -45,7 +45,7 @@ jobs:
 
     - name: Install dependencies
       if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
-      run: poetry install -E test -E docs --no-interaction --no-root
+      run: poetry install -E test -E docs --no-interaction
 
     - name: Run tests on Linux
       # Set DOCKER_HOST to connect to the dind service on Linux
@@ -92,7 +92,7 @@ jobs:
 
     - name: Install dependencies
       if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
-      run: poetry install -E test -E docs --no-interaction --no-root
+      run: poetry install -E test -E docs --no-interaction
 
     - name: Run tests on ${{ matrix.os }}
       run: poetry run pytest --cov=py_load_medgen --cov-report=xml
