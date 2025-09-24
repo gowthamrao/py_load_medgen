@@ -6,15 +6,16 @@ build-backend = "setuptools.build_meta"
 name = "py_load_medgen"
 version = "0.1.0"
 authors = [
-  { name="Gowtham Rao", email="rao@ohdsi.org" },
+  { name="Gowtham Adamane Rao", email="rao@ohdsi.org" },
 ]
 description = "A Python package for scalable, reliable, and high-performance ETL of the NCBI MedGen database."
 readme = "README.md"
 requires-python = ">=3.11"
+license = { file = "LICENSE.md" }
 keywords = ["etl", "ncbi", "medgen", "health", "bioinformatics"]
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: MIT License",
+    "License :: Other/Proprietary License",
     "Operating System :: OS Independent",
 ]
 dependencies = ["tenacity", "typing-extensions"]

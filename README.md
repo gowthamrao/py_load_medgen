@@ -143,6 +143,10 @@ Contributions are welcome! Please follow these steps:
 
 For more details, please see the [Extending the Loader](./docs/extending.md) guide if you plan to add support for a new database.
 
-## 📄 License
+## License
 
-This project is licensed under the MIT License. See the [LICENSE.md](./LICENSE.md) file for details.
+This project is **Source-Available** and dual-licensed.
+
+The software is available under the [Prosperity Public License 3.0.0](LICENSE). You may use the software for non-commercial purposes, or for a commercial trial period of up to 30 days.
+
+Commercial use beyond the 30-day trial period requires a separate commercial license. Please contact Gowtham Adamane Rao for details.
