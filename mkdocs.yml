@@ -1,0 +1,47 @@
+site_name: py-load-medgen
+site_description: "A Python package for scalable, reliable, and high-performance ETL of the NCBI MedGen database."
+repo_url: https://github.com/ohdsi/py-load-medgen # Placeholder
+edit_uri: "" # Optional: link to source files
+
+theme:
+  name: material
+  palette:
+    # Palette toggle for light vs dark mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - toc.integrate
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.tabs.link
+    - content.code.annotation
+    - content.code.copy
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          options:
+            show_root_heading: true
+            show_source: true
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Usage:
+    - CLI Reference: cli.md
+  - Extending the Loader: extending.md
+  - API Reference: reference.md

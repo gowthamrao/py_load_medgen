@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "py_load_medgen"
+version = "0.1.0"
+authors = [
+  { name="Gowtham Rao", email="rao@ohdsi.org" },
+]
+description = "A Python package for scalable, reliable, and high-performance ETL of the NCBI MedGen database."
+readme = "README.md"
+requires-python = ">=3.11"
+keywords = ["etl", "ncbi", "medgen", "health", "bioinformatics"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = ["tenacity", "typing-extensions"]
+
+[project.optional-dependencies]
+postgres = ["psycopg[binary]"]
+test = ["pytest", "pytest-mock", "psycopg[binary]", "testcontainers[postgres]", "sqlalchemy", "psycopg2-binary", "pytest-cov"]
+docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
+
+[project.urls]
+"Homepage" = "https://github.com/ohdsi/py-load-medgen"
+"Bug Tracker" = "https://github.com/ohdsi/py-load-medgen/issues"
+
+[project.scripts]
+py_load_medgen = "py_load_medgen.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+
+[tool.mypy]
+strict = true
+
+[[tool.mypy.overrides]]
+module = [
+    "pytest",
+    "testcontainers.*",
+    "tenacity",
+    "psycopg",
+    "psycopg.*"
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q"
+testpaths = [
+    "tests",
+]
+markers = [
+    "unit: marks tests as unit tests",
+    "integration: marks tests as integration tests",
+]
