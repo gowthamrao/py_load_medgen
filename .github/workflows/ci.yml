@@ -46,12 +46,14 @@ jobs:
     - name: Install dependencies
       if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
       run: poetry install -E test -E docs --no-interaction
+      shell: bash
 
     - name: Run tests on Linux
       # Set DOCKER_HOST to connect to the dind service on Linux
       env:
         DOCKER_HOST: tcp://dind:2375
       run: poetry run pytest --cov=py_load_medgen --cov-report=xml
+      shell: bash
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
@@ -93,9 +95,11 @@ jobs:
     - name: Install dependencies
       if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
       run: poetry install -E test -E docs --no-interaction
+      shell: bash
 
     - name: Run tests on ${{ matrix.os }}
       run: poetry run pytest --cov=py_load_medgen --cov-report=xml
+      shell: bash
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
