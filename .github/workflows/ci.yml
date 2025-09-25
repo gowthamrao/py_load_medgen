@@ -101,12 +101,8 @@ jobs:
       run: poetry install -E test -E docs --no-interaction
       shell: bash
 
-    - name: Pull Docker images
-      run: |
-        docker pull postgres:13-alpine
-        docker pull postgres:16-alpine
     - name: Run tests on ${{ matrix.os }}
-      run: poetry run pytest --cov=py_load_medgen --cov-report=xml
+      run: poetry run pytest --cov=py_load_medgen --cov-report=xml --ignore=tests/integration
       shell: bash
 
     - name: Upload coverage to Codecov
