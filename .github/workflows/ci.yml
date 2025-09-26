@@ -37,7 +37,7 @@ jobs:
       # Set DOCKER_HOST to connect to the dind service on Linux
       env:
         DOCKER_HOST: tcp://dind:2375
-      run: poetry run pytest --cov=py_load_medgen --cov-report=xml
+      run: sudo -E poetry run pytest --cov=py_load_medgen --cov-report=xml
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
