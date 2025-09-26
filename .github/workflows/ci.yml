@@ -30,17 +30,28 @@ jobs:
         python-version: ${{ matrix.python-version }}
         cache: 'poetry'
 
-    - name: Install Poetry
-      run: pipx install poetry
+    - name: Install Poetry and Diagnose
+      run: |
+        pipx install poetry
+        echo "--- which pipx ---"
+        which pipx
+        echo "--- ls -la $HOME ---"
+        ls -la $HOME
+        echo "--- ls -la $HOME/.local ---"
+        ls -la $HOME/.local
+        echo "--- ls -la $HOME/.local/bin ---"
+        ls -la $HOME/.local/bin
+        echo "--- printenv ---"
+        printenv
 
     - name: Install dependencies
-      run: $HOME/.local/bin/poetry install -E test -E docs
+      run: poetry install -E test -E docs
 
     - name: Run tests on Linux
       # Set DOCKER_HOST to connect to the dind service on Linux
       env:
         DOCKER_HOST: tcp://dind:2375
-      run: sudo -E $HOME/.local/bin/poetry run pytest --cov=py_load_medgen --cov-report=xml
+      run: poetry run pytest --cov=py_load_medgen --cov-report=xml
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
@@ -66,14 +77,11 @@ jobs:
         python-version: ${{ matrix.python-version }}
         cache: 'poetry'
 
-    - name: Install Poetry
-      run: pipx install poetry
-
     - name: Install dependencies
-      run: $HOME/.local/bin/poetry install -E test -E docs
+      run: poetry install -E test -E docs
 
     - name: Run tests on ${{ matrix.os }}
-      run: $HOME/.local/bin/poetry run pytest --cov=py_load_medgen --cov-report=xml
+      run: poetry run pytest --cov=py_load_medgen --cov-report=xml
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
