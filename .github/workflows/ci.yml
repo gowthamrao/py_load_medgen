@@ -30,6 +30,9 @@ jobs:
         python-version: ${{ matrix.python-version }}
         cache: 'poetry'
 
+    - name: Install Poetry
+      run: pipx install poetry
+
     - name: Install dependencies
       run: poetry install -E test -E docs
 
@@ -62,6 +65,9 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
         cache: 'poetry'
+
+    - name: Install Poetry
+      run: pipx install poetry
 
     - name: Install dependencies
       run: poetry install -E test -E docs
