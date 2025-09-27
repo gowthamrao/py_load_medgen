@@ -2,75 +2,108 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  test-linux:
-    runs-on: ubuntu-latest
-    services:
-      # Docker-in-Docker service is required for testcontainers on Linux
-      dind:
-        image: docker:dind
-        # privileged is required for dind
-        options: --privileged
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'poetry'
-
-    - name: Install dependencies
-      run: poetry install -E test -E docs
-
-    - name: Run tests on Linux
-      # Set DOCKER_HOST to connect to the dind service on Linux
-      env:
-        DOCKER_HOST: tcp://dind:2375
-      run: poetry run pytest --cov=py_load_medgen --cov-report=xml
-
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-        fail_ci_if_error: true
-
-  test-other-os:
+  test:
+    name: Test on ${{ matrix.os }} with Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
         python-version: ["3.11", "3.12"]
+        os: [ubuntu-latest, macos-latest, windows-2025]
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@a5ac7e51b4109f5124f9564e9f38e5e18a1294db # v4.1.7
 
+    # 1. Install pipx and Poetry (Must happen BEFORE setup-python for caching to work)
+    - name: Install Poetry
+      run: |
+        python -m pip install --user pipx
+        python -m pipx install poetry
+      shell: bash
+
+    # 2. Setup Python and enable Poetry caching
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
+      id: setup-python
+      uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # v5.1.0
       with:
         python-version: ${{ matrix.python-version }}
         cache: 'poetry'
 
+    # 3. Environment Dump (Crucial for Debugging)
+    - name: Dump environment details
+      shell: bash
+      run: |
+        echo "OS/Runner: ${{ runner.os }}"
+        echo "Python version:"
+        python --version
+        echo "Poetry version:"
+        poetry --version
+        echo "Poetry Environment Info:"
+        poetry env info
+        echo "PATH:"
+        echo $PATH
+
+    # 4. Install Dependencies
     - name: Install dependencies
-      run: poetry install -E test -E docs
+      # Use -vv for highly detailed installation and solver logs
+      # Use -E to install optional dependency groups (extras)
+      run: poetry install --no-interaction -vv -E test -E docs
 
-    - name: Run tests on ${{ matrix.os }}
-      run: poetry run pytest --cov=py_load_medgen --cov-report=xml
+    # 5. Dependency Verification (Crucial for Debugging)
+    - name: Verify Dependency Tree
+      run: poetry show --tree
 
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
+    - name: Run Unit Tests
+      # Adjust path (e.g., tests/unit/) or marker (e.g., -m "not integration") as necessary.
+      run: poetry run pytest -vv -m "unit" --cov=./ --cov-report=xml:coverage-unit.xml
+
+    - name: Run Integration Tests
+      # Adjust path (e.g., tests/integration/) or marker (e.g., -m "integration") as necessary.
+      run: poetry run pytest -vv -m "integration" --cov=./ --cov-report=xml:coverage-integration.xml
+
+    - name: Upload Unit Test coverage to Codecov
+      # Ensure upload happens even if tests fail, but not if the workflow was cancelled
+      if: ${{ !cancelled() }}
+      uses: codecov/codecov-action@e25203bf9b39ce5425674ea6d82b43b924513837 # v4.4.1
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
+        file: ./coverage-unit.xml
+        # Flag format: [OS]-py[Version]-unit
+        flags: ${{ matrix.os }}-py${{ matrix.python-version }}-unit
         fail_ci_if_error: true
+        verbose: true # Enable verbose logging for the uploader
+
+    - name: Upload Integration Test coverage to Codecov
+      if: ${{ !cancelled() }}
+      uses: codecov/codecov-action@e25203bf9b39ce5425674ea6d82b43b924513837 # v4.4.1
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        file: ./coverage-integration.xml
+        # Flag format: [OS]-py[Version]-integration
+        flags: ${{ matrix.os }}-py${{ matrix.python-version }}-integration
+        fail_ci_if_error: true
+        verbose: true
+
+    - name: Upload reports and logs on failure
+      uses: actions/upload-artifact@af595ade81e944b3250b95a63930b201a0443406 # v4.3.3
+      if: failure()
+      with:
+        name: ci-failure-reports-${{ matrix.os }}-${{ matrix.python-version }}
+        path: |
+          coverage-unit.xml
+          coverage-integration.xml
