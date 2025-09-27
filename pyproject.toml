@@ -1,39 +1,49 @@
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "py_load_medgen"
+[tool.poetry]
+name = "py-load-medgen"
 version = "0.1.0"
-authors = [
-  { name="Gowtham Adamane Rao", email="rao@ohdsi.org" },
-]
 description = "A Python package for scalable, reliable, and high-performance ETL of the NCBI MedGen database."
+authors = ["Gowtham Adamane Rao <rao@ohdsi.org>"]
 readme = "README.md"
-requires-python = ">=3.11"
-license = { file = "LICENSE.md" }
+license = "Proprietary"
+homepage = "https://github.com/ohdsi/py-load-medgen"
+repository = "https://github.com/ohdsi/py-load-medgen"
 keywords = ["etl", "ncbi", "medgen", "health", "bioinformatics"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: Other/Proprietary License",
     "Operating System :: OS Independent",
 ]
-dependencies = ["tenacity", "typing-extensions"]
+packages = [{ include = "py_load_medgen", from = "src" }]
 
-[project.optional-dependencies]
-postgres = ["psycopg[binary]"]
-test = ["pytest", "pytest-mock", "psycopg[binary]", "testcontainers[postgres]", "sqlalchemy", "psycopg2-binary", "pytest-cov"]
-docs = ["mkdocs", "mkdocs-material", "mkdocstrings[python]"]
+[tool.poetry.dependencies]
+python = ">=3.11"
+tenacity = "*"
+"typing-extensions" = "*"
+psycopg = { version = "*", extras = ["binary"], optional = true }
 
-[project.urls]
-"Homepage" = "https://github.com/ohdsi/py-load-medgen"
-"Bug Tracker" = "https://github.com/ohdsi/py-load-medgen/issues"
+[tool.poetry.group.test.dependencies]
+pytest = "*"
+pytest-mock = "*"
+psycopg = { version = "*", extras = ["binary"] }
+testcontainers = { version = "*", extras = ["postgres"] }
+sqlalchemy = "*"
+psycopg2-binary = "*"
+pytest-cov = "*"
 
-[project.scripts]
+[tool.poetry.group.docs.dependencies]
+mkdocs = "*"
+mkdocs-material = "*"
+mkdocstrings = { version = "*", extras = ["python"] }
+
+[tool.poetry.extras]
+postgres = ["psycopg"]
+
+[tool.poetry.scripts]
 py_load_medgen = "py_load_medgen.cli:main"
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
 
 [tool.ruff]
 line-length = 88

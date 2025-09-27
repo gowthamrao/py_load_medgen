@@ -2,75 +2,85 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [main, develop]
   pull_request:
-    branches: [ main, develop ]
+    branches: [main, develop]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
-  test-linux:
+  lint:
     runs-on: ubuntu-latest
-    services:
-      # Docker-in-Docker service is required for testcontainers on Linux
-      dind:
-        image: docker:dind
-        # privileged is required for dind
-        options: --privileged
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.12"]
-
+    timeout-minutes: 15
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+      - name: Set up Python
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: '3.12'
+      - name: Run pre-commit
+        uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'poetry'
-
-    - name: Install dependencies
-      run: poetry install -E test -E docs
-
-    - name: Run tests on Linux
-      # Set DOCKER_HOST to connect to the dind service on Linux
-      env:
-        DOCKER_HOST: tcp://dind:2375
-      run: poetry run pytest --cov=py_load_medgen --cov-report=xml
-
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-        fail_ci_if_error: true
-
-  test-other-os:
+  test:
+    needs: lint
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
-        python-version: ["3.11", "3.12"]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python-version: ['3.11', '3.12']
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
 
-    - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'poetry'
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'poetry'
 
-    - name: Install dependencies
-      run: poetry install -E test -E docs
+      - name: Install dependencies
+        run: |
+          pip install poetry
+          poetry install --with test --no-interaction -vv
 
-    - name: Run tests on ${{ matrix.os }}
-      run: poetry run pytest --cov=py_load_medgen --cov-report=xml
+      - name: Run unit tests
+        run: poetry run pytest --cov=./ --cov-report=xml:coverage-unit.xml -m unit
 
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v4
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-        fail_ci_if_error: true
+      - name: Run integration tests
+        run: poetry run pytest --cov=./ --cov-report=xml:coverage-integration.xml -m integration
+
+      - name: Upload unit test coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: ./coverage-unit.xml
+          flags: ${{ matrix.os }}-py${{ matrix.python-version }}-unit
+          fail_ci_if_error: true
+          verbose: true
+
+      - name: Upload integration test coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: ./coverage-integration.xml
+          flags: ${{ matrix.os }}-py${{ matrix.python-version }}-integration
+          fail_ci_if_error: true
+          verbose: true
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.os }}-${{ matrix.python-version }}
+          path: ./**.log
