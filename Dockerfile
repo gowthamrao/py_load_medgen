@@ -1,45 +1,43 @@
 # ---- Builder Stage ----
-# This stage installs dependencies using Poetry
-FROM python:3.11-slim AS builder
+# Use a specific Python version for reproducibility
+FROM python:3.12-slim as builder
 
-# Set environment variables for Poetry
-ENV POETRY_VERSION=1.8.2
-ENV POETRY_HOME="/opt/poetry"
-ENV POETRY_VIRTUALENVS_CREATE=false
-ENV PATH="$POETRY_HOME/bin:$PATH"
-
-# Install Poetry
-RUN apt-get update && apt-get install -y curl && \
-    curl -sSL https://install.python-poetry.org | python3 - && \
-    apt-get remove -y curl && apt-get autoremove -y && rm -rf /var/lib/apt/lists/*
-
-# Copy project definition files
+# Set working directory
 WORKDIR /app
+
+# Install poetry
+RUN pip install poetry
+
+# Copy only the files needed for dependency installation
 COPY pyproject.toml poetry.lock ./
 
-# Install only production dependencies
-RUN poetry install --no-dev --no-interaction --no-ansi
+# Install dependencies, including optional ones for production
+# --no-root is important to prevent poetry from creating a venv
+RUN poetry install --no-root --no-dev --with postgres
+
+# Export dependencies to a requirements.txt file
+RUN poetry export -f requirements.txt --output requirements.txt --without-hashes
+
 
 # ---- Final Stage ----
-# This stage creates the final, lean production image
-FROM python:3.11-slim AS final
+# Use a specific, lean Python version
+FROM python:3.12-slim
 
-# Create a non-root user for security
-RUN groupadd -r appuser && useradd -r -g appuser -d /home/appuser -m appuser
-
-# Copy installed dependencies from the builder stage
-COPY --from=builder /app/.venv /app/.venv
-
-# Copy application source code
-COPY src/ /app/src
-
-# Set environment to use the virtual environment
-ENV PATH="/app/.venv/bin:$PATH"
+# Set working directory
 WORKDIR /app
 
-# Switch to the non-root user
-USER appuser
+# Create a non-root user and group
+RUN addgroup --system app && adduser --system --group app
 
-# Set the entrypoint for the application's CLI
-ENTRYPOINT ["python", "-m", "py_load_medgen.cli"]
-CMD ["--help"]
+# Copy requirements and install them
+COPY --from=builder /app/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the application source code
+COPY src/ /app/src/
+
+# Set the entrypoint for the application
+ENTRYPOINT ["python", "-m", "src.py_load_medgen.cli"]
+
+# Switch to the non-root user
+USER app

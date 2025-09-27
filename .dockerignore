@@ -1,0 +1,45 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.pdm-build/
+.venv/
+.env
+
+# Poetry
+.poetry/
+poetry.lock
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+sdist/
+wheel/
+*.egg
+
+# Test and coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.log
+
+# IDE
+.idea/
+.vscode/
+
+# Docs
+site/
+mkdocs.yml
+
+# Other
+.DS_Store
+docker.log

@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -15,7 +15,6 @@ permissions:
 
 jobs:
   lint:
-    name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -24,12 +23,11 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
         with:
-          python-version: '3.11'
-      - name: Run pre-commit hooks
+          python-version: '3.12'
+      - name: Run pre-commit
         uses: pre-commit/action@2c7b3805fd2a0fd8c1884dcaebf91fc102a13ecd
 
   test:
-    name: Test
     needs: lint
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
@@ -52,46 +50,37 @@ jobs:
       - name: Install dependencies
         run: |
           pip install poetry
-          poetry install -E test -E docs
-        shell: bash
+          poetry install --with test --no-interaction -vv
 
-      - name: Run Unit Tests
-        run: poetry run pytest tests/unit --cov=src --cov-report=xml:coverage-unit.xml
-        shell: bash
+      - name: Run unit tests
+        run: poetry run pytest --cov=./ --cov-report=xml:coverage-unit.xml -m unit
 
-      - name: Upload Unit Test Coverage
+      - name: Run integration tests
+        run: poetry run pytest --cov=./ --cov-report=xml:coverage-integration.xml -m integration
+
+      - name: Upload unit test coverage to Codecov
+        if: ${{ !cancelled() }}
         uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./coverage-unit.xml
+          file: ./coverage-unit.xml
           flags: ${{ matrix.os }}-py${{ matrix.python-version }}-unit
           fail_ci_if_error: true
           verbose: true
 
-      - name: Run Integration Tests (Ubuntu only)
-        if: runner.os == 'Linux'
-        run: |
-          # The AGENTS.md file noted a sudo requirement for local execution.
-          # In GitHub Actions, the runner user has Docker permissions, so sudo is not needed.
-          poetry run pytest tests/integration --cov=src --cov-report=xml:coverage-integration.xml
-        shell: bash
-
-      - name: Upload Integration Test Coverage (Ubuntu only)
-        if: runner.os == 'Linux' && !cancelled()
+      - name: Upload integration test coverage to Codecov
+        if: ${{ !cancelled() }}
         uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./coverage-integration.xml
+          file: ./coverage-integration.xml
           flags: ${{ matrix.os }}-py${{ matrix.python-version }}-integration
           fail_ci_if_error: true
           verbose: true
 
-      - name: Upload failure artifacts
+      - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-reports-${{ matrix.os }}-py${{ matrix.python-version }}
-          path: |
-            coverage-unit.xml
-            coverage-integration.xml
-          if-no-files-found: ignore
+          name: logs-${{ matrix.os }}-${{ matrix.python-version }}
+          path: ./**.log
