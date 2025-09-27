@@ -30,19 +30,8 @@ jobs:
         python-version: ${{ matrix.python-version }}
         cache: 'poetry'
 
-    - name: Install Poetry and Diagnose
-      run: |
-        pipx install poetry
-        echo "--- which pipx ---"
-        which pipx
-        echo "--- ls -la $HOME ---"
-        ls -la $HOME
-        echo "--- ls -la $HOME/.local ---"
-        ls -la $HOME/.local
-        echo "--- ls -la $HOME/.local/bin ---"
-        ls -la $HOME/.local/bin
-        echo "--- printenv ---"
-        printenv
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
 
     - name: Install dependencies
       run: poetry install -E test -E docs
@@ -76,6 +65,9 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
         cache: 'poetry'
+
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
 
     - name: Install dependencies
       run: poetry install -E test -E docs
